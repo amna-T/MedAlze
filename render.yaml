@@ -3,9 +3,8 @@ services:
     name: medalze-backend
     runtime: python
     plan: free
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 1 app:app
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && gunicorn -w 1 app:app
     envVars:
       - key: FLASK_APP
         value: app.py
