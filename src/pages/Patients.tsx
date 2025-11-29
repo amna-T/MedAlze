@@ -11,9 +11,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Search, User, Phone, Mail, Calendar, FileText, Stethoscope } from 'lucide-react';
+import { Search, User, Phone, Mail, Calendar, Fingerprint, Edit, Save, Stethoscope } from 'lucide-react'; // Added Stethoscope
 import { db, auth } from '@/lib/firebase'; // Import auth
-import { collection, query, getDocs, orderBy, Timestamp, where, documentId } from 'firebase/firestore'; // Import documentId
+import { collection, query, getDocs, orderBy, Timestamp, where, documentId, CollectionReference, Query, DocumentData } from 'firebase/firestore'; // Import documentId, CollectionReference, Query, DocumentData
 import { PatientDocument, XRayRecord } from '@/types/database';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -78,18 +78,23 @@ const Patients = () => {
         let allXrays: XRayRecord[] = [];
 
         // 1. Determine which patients to fetch based on user role
-        let patientsQuery;
+        let patientsQueryRef: CollectionReference<DocumentData> | Query<DocumentData> = collection(db, "patients");
         if (user.role === 'doctor' && user.id) {
-          // Doctors can only see patients they are assigned to
-          patientsQuery = query(collection(db, "patients"), where('assignedDoctorIds', 'array-contains', user.id));
-          console.log(`Patients: Doctor user. Filtering patients for assignedDoctorIds containing: ${user.id}`);
+          // Doctors can now see patients that have an assigned radiologist
+          // This query is allowed by security rules for doctors.
+          patientsQueryRef = query(
+            patientsQueryRef, 
+            where('assignedRadiologistId', '>', ''),
+            orderBy('assignedRadiologistId', 'asc')
+          );
+          console.log(`Patients: Doctor user. Filtering patients for assignedRadiologistId > ''.`);
         } else if (user.role === 'radiologist' && user.id) {
           // Radiologists can only see patients they are assigned to
-          patientsQuery = query(collection(db, "patients"), where('assignedRadiologistId', '==', user.id));
+          patientsQueryRef = query(patientsQueryRef, where('assignedRadiologistId', '==', user.id));
           console.log(`Patients: Radiologist user. Filtering patients for assignedRadiologistId: ${user.id}`);
         } else if (user.role === 'admin') {
           // Admins can see all patients
-          patientsQuery = query(collection(db, "patients"));
+          // No additional where clause needed for admin
           console.log(`Patients: Admin user. Fetching all patients.`);
         } else {
           // Other roles (e.g., patient) should not access this page or will see no patients
@@ -98,24 +103,57 @@ const Patients = () => {
           return;
         }
 
-        const patientsSnapshot = await getDocs(patientsQuery);
-        patientDocsToProcess = patientsSnapshot.docs.map(doc => ({ ...doc.data() as PatientDocument, id: doc.id }));
-        console.log(`Patients: Fetched ${patientDocsToProcess.length} patient documents for current user's role.`);
+        const patientsSnapshot = await getDocs(patientsQueryRef);
+        let fetchedPatientDocs: PatientDocument[] = patientsSnapshot.docs.map(doc => ({ ...doc.data() as PatientDocument, id: doc.id }));
+        console.log(`Patients: Fetched ${fetchedPatientDocs.length} patient documents for current user's role.`);
 
+        // Client-side filter for doctors to only show patients assigned to them
+        if (user.role === 'doctor' && user.id) {
+          fetchedPatientDocs = fetchedPatientDocs.filter(p => p.assignedDoctorIds?.includes(user.id));
+          console.log(`Patients: Doctor user. Client-side filtered to ${fetchedPatientDocs.length} patients assigned to doctor.`);
+        }
+        patientDocsToProcess = fetchedPatientDocs;
         const patientIdsToFetchXraysFor = patientDocsToProcess.map(p => p.id);
+
 
         // 2. Fetch X-ray records for these patients
         if (patientIdsToFetchXraysFor.length > 0) {
-          const xrayIdBatches: string[][] = [];
-          // Firestore 'in' query has a limit of 10, so we batch the patient IDs
-          for (let i = 0; i < patientIdsToFetchXraysFor.length; i += 10) {
-            xrayIdBatches.push(patientIdsToFetchXraysFor.slice(i, i + 10));
-          }
+          if (user.role === 'doctor' && user.id) {
+            // Doctors must filter by assignedDoctorId in the Firestore query
+            const xraysQuery = query(
+              collection(db, "xrays"),
+              where('assignedDoctorId', '==', user.id),
+              orderBy("uploadedAt", "desc")
+            );
+            const xraysSnapshot = await getDocs(xraysQuery);
+            allXrays = xraysSnapshot.docs.map(doc => ({ ...doc.data() as XRayRecord, id: doc.id }));
+            console.log(`Patients: Doctor user. Fetched ${allXrays.length} X-rays for assignedDoctorId: ${user.id}.`);
+          } else if (user.role === 'radiologist' && user.id) {
+            // Radiologists must filter by patientId (using 'in' clause for batches) and order by uploadedAt.
+            const xrayIdBatches: string[][] = [];
+            for (let i = 0; i < patientIdsToFetchXraysFor.length; i += 10) {
+              xrayIdBatches.push(patientIdsToFetchXraysFor.slice(i, i + 10));
+            }
 
-          for (const batch of xrayIdBatches) {
-            const batchXraysQuery = query(collection(db, "xrays"), where('patientId', 'in', batch), orderBy("uploadedAt", "desc"));
-            const batchXraysSnapshot = await getDocs(batchXraysQuery);
-            allXrays.push(...batchXraysSnapshot.docs.map(doc => ({ ...doc.data() as XRayRecord, id: doc.id })));
+            for (const batch of xrayIdBatches) {
+              const batchXraysQuery = query(
+                collection(db, "xrays"),
+                where('patientId', 'in', batch),
+                orderBy("uploadedAt", "desc")
+              );
+              const batchXraysSnapshot = await getDocs(batchXraysQuery);
+              allXrays.push(...batchXraysSnapshot.docs.map(doc => ({ ...doc.data() as XRayRecord, id: doc.id })));
+            }
+            console.log(`Patients: Radiologist user. Fetched ${allXrays.length} X-rays for assigned patients.`);
+          } else if (user.role === 'admin') {
+            // Admins can see all X-rays
+            const xraysQuery = query(
+              collection(db, "xrays"),
+              orderBy("uploadedAt", "desc")
+            );
+            const xraysSnapshot = await getDocs(xraysQuery);
+            allXrays = xraysSnapshot.docs.map(doc => ({ ...doc.data() as XRayRecord, id: doc.id }));
+            console.log(`Patients: Admin user. Fetched ${allXrays.length} all X-rays.`);
           }
         }
         console.log(`Patients: Total X-ray records fetched for relevant patients: ${allXrays.length}.`);
@@ -125,7 +163,9 @@ const Patients = () => {
         for (const patientData of patientDocsToProcess) {
           const patientId = patientData.id;
 
+          // Client-side filter X-rays to only include those for the current patient
           const patientXrays = allXrays.filter(xray => xray.patientId === patientId);
+
           const totalReports = patientXrays.length;
 
           let lastVisit = 'N/A';
@@ -268,10 +308,6 @@ const Patients = () => {
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Calendar className="h-4 w-4" />
                   <span>Last visit: {patient.lastVisit}</span>
-                </div>
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <FileText className="h-4 w-4" />
-                  <span>{patient.totalReports} reports</span>
                 </div>
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Stethoscope className="h-4 w-4" />

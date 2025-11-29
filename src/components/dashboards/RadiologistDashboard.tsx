@@ -68,10 +68,10 @@ const RadiologistDashboard = () => {
 
       setLoading(true);
       try {
-        // Fetch all patients to filter by assigned radiologist
-        const allPatientsQuery = query(collection(db, "patients"), where('assignedRadiologistId', '==', user.id));
-        const allPatientsSnapshot = await getDocs(allPatientsQuery);
-        const assignedPatients: PatientDocument[] = allPatientsSnapshot.docs.map(doc => ({ ...doc.data() as PatientDocument, id: doc.id }));
+        // Fetch all patients assigned to this radiologist
+        const assignedPatientsQuery = query(collection(db, "patients"), where('assignedRadiologistId', '==', user.id));
+        const assignedPatientsSnapshot = await getDocs(assignedPatientsQuery);
+        const assignedPatients: PatientDocument[] = assignedPatientsSnapshot.docs.map(doc => ({ ...doc.data() as PatientDocument, id: doc.id }));
         const assignedPatientIds = new Set(assignedPatients.map(p => p.id));
         console.log(`RadiologistDashboard: Found ${assignedPatientIds.size} patients assigned to current radiologist.`);
         if (assignedPatientIds.size > 0) {
@@ -79,12 +79,8 @@ const RadiologistDashboard = () => {
         }
 
 
-        // Fetch X-ray records relevant to this radiologist's assigned patients
-        let xraysQuery = query(collection(db, "xrays"), orderBy("uploadedAt", "desc"));
-        if (assignedPatientIds.size > 0) {
-          xraysQuery = query(xraysQuery, where('patientId', 'in', Array.from(assignedPatientIds)));
-        } else {
-          // If no patients are assigned, there are no xrays to fetch for this radiologist
+        // If no patients are assigned, there are no xrays or appointments to fetch for this radiologist
+        if (assignedPatientIds.size === 0) {
           console.log("RadiologistDashboard: No patients assigned, skipping X-ray and appointment fetches.");
           setStats({
             totalXrays: 0,
@@ -104,30 +100,34 @@ const RadiologistDashboard = () => {
           setLoading(false);
           return;
         }
-        
+
+        // Fetch X-ray records for these assigned patients
+        // The security rule for xrays list for radiologists requires filtering by patientId and ordering by uploadedAt.
+        const xraysQuery = query(
+          collection(db, "xrays"),
+          where('patientId', 'in', Array.from(assignedPatientIds)),
+          orderBy("uploadedAt", "desc")
+        );
         const xraysSnapshot = await getDocs(xraysQuery);
         const allXrays: XRayRecord[] = xraysSnapshot.docs.map(doc => ({ ...doc.data() as XRayRecord, id: doc.id }));
         console.log(`RadiologistDashboard: Fetched ${allXrays.length} X-ray records for assigned patients.`);
         if (allXrays.length > 0) console.log("RadiologistDashboard: First fetched X-ray:", allXrays[0]);
 
 
-        // Fetch appointments relevant to this radiologist's assigned patients
-        let appointmentsQuery = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
-        if (assignedPatientIds.size > 0) {
-          appointmentsQuery = query(appointmentsQuery, where('patientId', 'in', Array.from(assignedPatientIds)));
-        } else {
-          // Already handled above, but for safety
-          const allAppointments: Appointment[] = [];
-        }
+        // Fetch appointments for these assigned patients
+        // The security rule for appointments list for radiologists requires filtering by patientId and ordering by createdAt.
+        const appointmentsQuery = query(
+          collection(db, "appointments"),
+          where('patientId', 'in', Array.from(assignedPatientIds)),
+          orderBy("createdAt", "desc")
+        );
         const appointmentsSnapshot = await getDocs(appointmentsQuery);
         const allAppointments: Appointment[] = appointmentsSnapshot.docs.map(doc => ({ ...doc.data() as Appointment, id: doc.id }));
         console.log(`RadiologistDashboard: Fetched ${allAppointments.length} appointment records for assigned patients.`);
 
 
-        // Fetch all doctor names and patient names to map IDs to names
+        // Fetch all doctor names to map IDs to names
         const doctorNamesMap = new Map<string, string>();
-        const patientNamesMap = new Map<string, string>();
-        
         const doctorsQuery = query(collection(db, "users"), where('role', '==', 'doctor'));
         const doctorsSnapshot = await getDocs(doctorsQuery);
         doctorsSnapshot.forEach(doc => {
@@ -135,6 +135,8 @@ const RadiologistDashboard = () => {
           doctorNamesMap.set(doc.id, doctorData.name);
         });
 
+        // Map for patient names
+        const patientNamesMap = new Map<string, string>();
         assignedPatients.forEach(p => { // Only map names for assigned patients
           patientNamesMap.set(p.id, p.name);
         });

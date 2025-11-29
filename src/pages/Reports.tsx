@@ -31,7 +31,7 @@ import RadiologistReviewForm from '@/components/RadiologistReviewForm'; // Impor
 import { Condition } from "@/utils/xrayAnalysis";
 import { CONDITIONS_METADATA } from "@/utils/conditionsMetadata";
 import { db } from "@/lib/firebase";
-import { collection, query, getDocs, orderBy, Timestamp, where } from "firebase/firestore";
+import { collection, query, getDocs, Timestamp, where, CollectionReference, Query, DocumentData } from "firebase/firestore"; // Import CollectionReference, Query, DocumentData
 import { XRayRecord, UserDocument, PatientDocument } from "@/types/database";
 import { useAuth } from "@/contexts/AuthContext";
 import { FilePenLine, Stethoscope, FileText, AlertTriangle, Eye, Brain } from "lucide-react"; // Added Brain icon
@@ -81,8 +81,8 @@ export default function Reports() {
     console.log("Reports: Current user ID:", user?.id);
     console.log("Reports: Current user patientId:", user?.patientId);
 
-    if (!db) {
-      console.warn("Reports: Firestore not available. Cannot fetch reports.");
+    if (!db || !user) {
+      console.warn("Reports: Firestore not available or user not logged in. Cannot fetch reports.");
       setLoading(false);
       return;
     }
@@ -90,11 +90,11 @@ export default function Reports() {
 
     setLoading(true);
     try {
-      let q = query(collection(db, "xrays"), orderBy("uploadedAt", "desc"));
+      let q: CollectionReference<DocumentData> | Query<DocumentData> = collection(db, "xrays");
       console.log("Reports: Initial query created.");
 
       // Filter reports based on user role
-      if (user?.role === 'patient') {
+      if (user.role === 'patient') {
         const patientIdForQuery = user.patientId;
         if (!patientIdForQuery) {
           console.warn("Reports: Patient ID not found for current user. Cannot fetch reports.");
@@ -103,40 +103,137 @@ export default function Reports() {
         }
         q = query(q, where('patientId', '==', patientIdForQuery));
         console.log(`Reports: Filtering for patientId: ${patientIdForQuery}`);
-      } else if (user?.role === 'doctor') {
+      } else if (user.role === 'doctor') {
         if (!user.id) {
           console.warn("Reports: Doctor user ID not found. Cannot fetch assigned reports.");
           setLoading(false);
           return;
         }
+        // Doctors must filter by assignedDoctorId to match security rules
         q = query(q, where('assignedDoctorId', '==', user.id));
         console.log(`Reports: Filtering for assignedDoctorId: ${user.id}`);
-      } else if (user?.role === 'radiologist') {
-        console.log(`Reports: Radiologist user. Fetching all reports.`);
-      } else if (user?.role === 'admin') {
+      } else if (user.role === 'radiologist') {
+        // Radiologists can only see X-rays for patients assigned to them
+        const patientsQuery = query(collection(db, "patients"), where('assignedRadiologistId', '==', user.id));
+        const patientsSnapshot = await getDocs(patientsQuery);
+        const assignedPatientIds = patientsSnapshot.docs.map(doc => doc.id);
+
+        if (assignedPatientIds.length === 0) {
+          console.log("Reports: Radiologist has no assigned patients, thus no X-rays to display.");
+          setReports([]);
+          setLoading(false);
+          return;
+        }
+        // Radiologists must query individually by patientId to match security rules
+        // Build queries for each patient and combine results
+        const radiologistQueries = assignedPatientIds.map(patientId =>
+          query(collection(db, "xrays"), where('patientId', '==', patientId))
+        );
+        
+        const allRadiologistReports: any[] = [];
+        for (const radiologistQuery of radiologistQueries) {
+          const snapshot = await getDocs(radiologistQuery);
+          allRadiologistReports.push(...snapshot.docs);
+        }
+        
+        console.log(`Reports: Radiologist user. Fetched X-rays for ${assignedPatientIds.length} patients. Total X-rays: ${allRadiologistReports.length}`);
+        
+        // Skip the normal query and process radiologist reports directly
+        const docs = allRadiologistReports.sort((a, b) => {
+          const aTime = (a.data() as XRayRecord).uploadedAt?.toMillis?.() || 0;
+          const bTime = (b.data() as XRayRecord).uploadedAt?.toMillis?.() || 0;
+          return bTime - aTime;
+        });
+        
+        let fetchedReports: DisplayReport[] = [];
+
+        // Fetch patient names for each report
+        const patientNamesMap = new Map<string, string>();
+        const patientIdsToFetch: Set<string> = new Set();
+        const doctorIdsToFetch: Set<string> = new Set();
+
+        docs.forEach((doc) => {
+          const data = doc.data() as XRayRecord;
+          patientIdsToFetch.add(data.patientId);
+          if (data.assignedDoctorId) {
+            doctorIdsToFetch.add(data.assignedDoctorId);
+          }
+        });
+
+        if (patientIdsToFetch.size > 0) {
+          const patientsCollectionRef = collection(db, "patients");
+          const patientsSnapshot = await getDocs(query(patientsCollectionRef, where('__name__', 'in', Array.from(patientIdsToFetch))));
+          patientsSnapshot.forEach(patientDoc => {
+            const patientData = patientDoc.data() as PatientDocument;
+            patientNamesMap.set(patientDoc.id, patientData.name);
+          });
+        }
+
+        const doctorNamesMap = new Map<string, string>();
+        if (doctorIdsToFetch.size > 0) {
+          const doctorsCollectionRef = collection(db, "users");
+          const doctorsSnapshot = await getDocs(query(doctorsCollectionRef, where('__name__', 'in', Array.from(doctorIdsToFetch))));
+          doctorsSnapshot.forEach(doctorDoc => {
+            const doctorData = doctorDoc.data() as UserDocument;
+            doctorNamesMap.set(doctorDoc.id, doctorData.name);
+          });
+        }
+
+        docs.forEach((doc) => {
+          const data = doc.data() as XRayRecord;
+          const reportDate = data.uploadedAt?.toDate().toLocaleDateString() || 'N/A';
+          
+          fetchedReports.push({
+            ...data,
+            id: doc.id,
+            date: reportDate,
+            patientName: patientNamesMap.get(data.patientId) || `Patient ${data.patientId}`,
+            assignedDoctorDisplayName: data.assignedDoctorId ? doctorNamesMap.get(data.assignedDoctorId) : 'N/A',
+          });
+        });
+
+        setReports(fetchedReports);
+        console.log(`Reports: Final fetched reports count for radiologist: ${fetchedReports.length}`);
+        setLoading(false);
+        return;
+      } else if (user.role === 'admin') {
         console.log(`Reports: Admin user. Fetching all reports.`);
       }
 
-      // Apply patientId filter from URL if present (for doctors/radiologists viewing specific patient reports)
+      // Apply patientId filter from URL if present (for doctors viewing specific patient reports)
       const patientIdFromUrl = searchParams.get('patientId');
       if (patientIdFromUrl) {
         // Ensure this filter is only applied if the user is allowed to see other patients' reports
-        if (user?.role === 'doctor' || user?.role === 'radiologist' || user?.role === 'admin') {
-          q = query(q, where('patientId', '==', patientIdFromUrl));
-          console.log(`Reports: Applying URL filter for patientId: ${patientIdFromUrl}`);
+        if (user.role === 'doctor' || user.role === 'admin') {
+          // For doctors, this will be a client-side filter as the Firestore query is already constrained by assignedDoctorId
+          if (user.role === 'doctor') {
+            // We will fetch all X-rays for the assigned doctor, then filter by patientIdFromUrl client-side
+            // No change to the Firestore query here for doctors.
+          } else {
+            q = query(q, where('patientId', '==', patientIdFromUrl));
+            console.log(`Reports: Applying URL filter for patientId: ${patientIdFromUrl}`);
+          }
         }
       }
 
       const querySnapshot = await getDocs(q);
       console.log(`Reports: Fetched ${querySnapshot.size} X-ray documents.`);
-      const fetchedReports: DisplayReport[] = [];
+      
+      // Sort in-memory by uploadedAt descending to avoid permission issues with rule evaluation
+      const docs = querySnapshot.docs.sort((a, b) => {
+        const aTime = (a.data() as XRayRecord).uploadedAt?.toMillis?.() || 0;
+        const bTime = (b.data() as XRayRecord).uploadedAt?.toMillis?.() || 0;
+        return bTime - aTime;
+      });
+      
+      let fetchedReports: DisplayReport[] = [];
 
       // Fetch patient names for each report
       const patientNamesMap = new Map<string, string>();
       const patientIdsToFetch: Set<string> = new Set();
       const doctorIdsToFetch: Set<string> = new Set(); // Collect doctor IDs
 
-      querySnapshot.forEach((doc) => {
+      docs.forEach((doc) => {
         const data = doc.data() as XRayRecord;
         patientIdsToFetch.add(data.patientId);
         if (data.assignedDoctorId) {
@@ -148,6 +245,7 @@ export default function Reports() {
 
 
       if (patientIdsToFetch.size > 0) {
+        console.log(`Reports: Attempting to fetch patient details for IDs: ${Array.from(patientIdsToFetch).join(', ')}`); // NEW LOG
         const patientsCollectionRef = collection(db, "patients");
         const patientsSnapshot = await getDocs(query(patientsCollectionRef, where('__name__', 'in', Array.from(patientIdsToFetch))));
         patientsSnapshot.forEach(patientDoc => {
@@ -169,7 +267,7 @@ export default function Reports() {
         console.log("Reports: Doctor names map:", Object.fromEntries(doctorNamesMap));
       }
 
-      querySnapshot.forEach((doc) => {
+      docs.forEach((doc) => {
         const data = doc.data() as XRayRecord;
         const reportDate = data.uploadedAt?.toDate().toLocaleDateString() || 'N/A';
         
@@ -181,6 +279,13 @@ export default function Reports() {
           assignedDoctorDisplayName: data.assignedDoctorId ? doctorNamesMap.get(data.assignedDoctorId) : 'N/A',
         });
       });
+
+      // Client-side filter for doctors if patientIdFromUrl is present
+      if (user.role === 'doctor' && patientIdFromUrl) {
+        fetchedReports = fetchedReports.filter(report => report.patientId === patientIdFromUrl);
+        console.log(`Reports: Doctor user. Client-side filtered reports for patientId: ${patientIdFromUrl}. Count: ${fetchedReports.length}`);
+      }
+
       setReports(fetchedReports);
       console.log(`Reports: Final fetched reports count: ${fetchedReports.length}`);
       if (fetchedReports.length > 0) console.log("Reports: First final report:", fetchedReports[0]);
@@ -384,7 +489,7 @@ export default function Reports() {
                     </CardTitle>
                     <CardDescription>Initial findings from the AI model.</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-6">
+                  <CardContent className="space-y-4">
                       {selectedReport.aiAnalysis.noSignificantFinding && (
                         <div className="p-3 rounded-lg bg-medical-warning/20 border border-medical-warning text-medical-warning flex items-center gap-2">
                           <AlertTriangle className="h-5 w-5" />

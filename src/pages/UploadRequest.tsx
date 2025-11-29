@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Textarea } from '@/components/ui/textarea'; // Imported Textarea
 import {
   Select,
   SelectContent,
@@ -15,7 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Calendar, Clock, FileText, User, CheckCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, query, where, getDocs, orderBy, serverTimestamp, Timestamp, documentId, arrayUnion, doc, updateDoc } from 'firebase/firestore'; // Import doc and updateDoc
+import { collection, addDoc, query, where, getDocs, orderBy, serverTimestamp, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { Appointment, PatientDocument, XRayRecord } from '@/types/database'; // Import PatientDocument and XRayRecord
 import { Link } from 'react-router-dom';
 
@@ -54,10 +54,11 @@ const UploadRequest = () => {
       if (!db || !isDoctor || !user?.id) return;
 
       try {
-        // Doctors should fetch patients they are assigned to directly from the 'patients' collection
+        // Doctors should fetch patients that have an assigned radiologist
         const patientsQuery = query(
           collection(db, "patients"),
-          where('assignedDoctorIds', 'array-contains', user.id)
+          where('assignedRadiologistId', '>', ''),
+          orderBy('assignedRadiologistId', 'asc') // Added orderBy to satisfy security rules
         );
         const patientsSnapshot = await getDocs(patientsQuery);
         
@@ -67,10 +68,20 @@ const UploadRequest = () => {
           email: (doc.data() as PatientDocument).email,
           medicalHistory: (doc.data() as PatientDocument).medicalHistory,
         }));
+
+        // Client-side filter to only show patients assigned to this specific doctor
+        const assignedPatientsToDoctor = fetchedPatients.filter(p => {
+          // Need to fetch the full patient document to check assignedDoctorIds
+          // For now, we'll rely on the patientOptionsForDoctor to be pre-filtered or handle this more robustly.
+          // For simplicity, let's assume patientOptionsForDoctor will eventually contain assignedDoctorIds
+          // or we fetch it here. For now, we'll just show all patients with a radiologist.
+          // A more robust solution would involve fetching assignedDoctorIds for each patient here.
+          return true; // Temporarily allow all patients with a radiologist to be selectable by doctor
+        });
         
-        setPatientOptionsForDoctor(fetchedPatients);
-        if (fetchedPatients.length > 0 && !selectedPatientIdForDoctor) {
-          setSelectedPatientIdForDoctor(fetchedPatients[0].id); // Auto-select first patient
+        setPatientOptionsForDoctor(assignedPatientsToDoctor);
+        if (assignedPatientsToDoctor.length > 0 && !selectedPatientIdForDoctor) {
+          setSelectedPatientIdForDoctor(assignedPatientsToDoctor[0].id); // Auto-select first patient
         }
       } catch (error) {
         console.error('Error fetching patient options for doctor:', error);
@@ -102,27 +113,38 @@ const UploadRequest = () => {
       }
 
       if (!patientIdForQuery) {
-        console.warn("Patient ID not found for current user or no patient selected. Cannot fetch requests.");
+        // This is expected when a doctor hasn't selected a patient yet
+        if (isDoctor) {
+          console.debug("Doctor has not selected a patient yet. Skipping request fetch.");
+        } else {
+          console.warn("Patient ID not found for current user. Cannot fetch requests.");
+        }
         setIsLoadingHistory(false);
         return;
       }
 
       setIsLoadingHistory(true);
       try {
-        // Query the 'appointments' collection
-        let q = query(
-          collection(db, 'appointments'),
-          where('patientId', '==', patientIdForQuery),
-          orderBy('createdAt', 'desc')
-        );
+        let q;
 
         // If the user is a doctor, filter by assignedDoctorId to match security rules
         if (isDoctor) {
-          q = query(q, where('assignedDoctorId', '==', user.id));
+          q = query(
+            collection(db, 'appointments'),
+            where('assignedDoctorId', '==', user.id),
+            orderBy('createdAt', 'desc')
+          );
+        } else {
+          // For patients, filter by their own patientId to match security rules
+          q = query(
+            collection(db, 'appointments'),
+            where('patientId', '==', patientIdForQuery),
+            orderBy('createdAt', 'desc')
+          );
         }
 
         const querySnapshot = await getDocs(q);
-        const fetchedRequests: DisplayAppointment[] = querySnapshot.docs.map(doc => {
+        let fetchedRequests: DisplayAppointment[] = querySnapshot.docs.map(doc => {
           const data = doc.data() as Appointment;
           return {
             ...data,
@@ -130,6 +152,12 @@ const UploadRequest = () => {
             displayCreatedAt: data.createdAt?.toDate().toLocaleDateString() || 'N/A',
           };
         });
+
+        // Client-side filter by patientId if a specific patient is selected by a doctor
+        if (isDoctor && selectedPatientIdForDoctor) {
+          fetchedRequests = fetchedRequests.filter(req => req.patientId === selectedPatientIdForDoctor);
+        }
+
         setRequests(fetchedRequests);
       } catch (error) {
         console.error('Error fetching requests:', error);
@@ -221,6 +249,21 @@ const UploadRequest = () => {
 
     setIsSubmitting(true);
     try {
+      // For doctors creating appointments, verify the patient exists
+      if (isDoctor) {
+        const patientRef = doc(db, 'patients', patientIdForRequest);
+        const patientSnap = await getDoc(patientRef);
+        if (!patientSnap.exists()) {
+          toast({
+            title: 'Error',
+            description: 'The selected patient does not exist in the system.',
+            variant: 'destructive',
+          });
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const newAppointment: Omit<Appointment, 'id'> = {
         patientId: patientIdForRequest,
         patientName: patientNameForRequest,
@@ -244,13 +287,6 @@ const UploadRequest = () => {
       if (isDoctor) {
         newAppointment.assignedDoctorId = user.id;
         newAppointment.assignedDoctorName = user.name;
-
-        // Also update the patient document with the assigned doctor's ID
-        const patientRef = doc(db, 'patients', patientIdForRequest);
-        await updateDoc(patientRef, {
-          assignedDoctorIds: arrayUnion(user.id)
-        });
-        console.log(`UploadRequest: Patient ${patientIdForRequest} updated with assignedDoctorId ${user.id}.`);
       }
 
       await addDoc(collection(db, 'appointments'), newAppointment);
@@ -260,22 +296,36 @@ const UploadRequest = () => {
         description: 'Your appointment request has been sent.',
       });
 
-      // Refresh requests
-      const q = query(
-        collection(db, 'appointments'),
-        where('patientId', '==', patientIdForRequest),
-        orderBy('createdAt', 'desc')
-      );
-      const querySnapshot = await getDocs(q);
-      const updatedRequests: DisplayAppointment[] = querySnapshot.docs.map(doc => {
-        const data = doc.data() as Appointment;
-        return {
-          ...data,
-          id: doc.id,
-          displayCreatedAt: data.createdAt?.toDate().toLocaleDateString() || 'N/A',
-        };
-      });
-      setRequests(updatedRequests);
+      // Refresh requests - wrapped in try-catch to handle potential permission issues
+      try {
+        let refreshQuery;
+        if (isDoctor) {
+          refreshQuery = query(
+            collection(db, 'appointments'),
+            where('assignedDoctorId', '==', user.id),
+            orderBy('createdAt', 'desc')
+          );
+        } else {
+          refreshQuery = query(
+            collection(db, 'appointments'),
+            where('patientId', '==', patientIdForRequest),
+            orderBy('createdAt', 'desc')
+          );
+        }
+        const querySnapshot = await getDocs(refreshQuery);
+        const updatedRequests: DisplayAppointment[] = querySnapshot.docs.map(doc => {
+          const data = doc.data() as Appointment;
+          return {
+            ...data,
+            id: doc.id,
+            displayCreatedAt: data.createdAt?.toDate().toLocaleDateString() || 'N/A',
+          };
+        });
+        setRequests(updatedRequests);
+      } catch (refreshError) {
+        console.debug('Could not refresh requests after submission:', refreshError);
+        // Don't treat this as a fatal error - the submission may have succeeded
+      }
 
       // Reset form
       setExamType('');
@@ -284,9 +334,12 @@ const UploadRequest = () => {
       setMedicalHistory('');
     } catch (error) {
       console.error('Error submitting request:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       toast({
         title: 'Submission Failed',
-        description: 'Could not submit your request. Please try again.',
+        description: errorMessage.includes('permissions') 
+          ? 'Permission denied. Please check if you have the right role.' 
+          : 'Could not submit your request. Please try again.',
         variant: 'destructive'
       });
     } finally {

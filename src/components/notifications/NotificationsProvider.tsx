@@ -80,12 +80,19 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode }> = ({
       setNotifications(fetchedNotifications);
       setUnreadCount(fetchedNotifications.filter(n => !n.read).length);
     }, (error) => {
-      console.error('Error fetching notifications:', error);
-      toast({
-        title: 'Notification Error',
-        description: 'Failed to load notifications.',
-        variant: 'destructive',
-      });
+      // Silently ignore permission errors during initial setup (e.g., email not verified yet)
+      if (error.code === 'permission-denied') {
+        console.debug('Notifications: Permission denied (likely email not verified yet):', error.message);
+        setNotifications([]);
+        setUnreadCount(0);
+      } else {
+        console.error('Error fetching notifications:', error);
+        toast({
+          title: 'Notification Error',
+          description: 'Failed to load notifications.',
+          variant: 'destructive',
+        });
+      }
     });
 
     return () => unsubscribe();

@@ -19,7 +19,19 @@ CORS(app) # Enable CORS for all routes
 
 # Configuration from environment variables
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'static/uploads')
-app.config['MODEL_PATH'] = os.getenv('MODEL_PATH', 'backend/model/chexnet.pth') # Updated model path
+
+# Get the backend directory path
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.getenv('MODEL_PATH', 'model/chexnet.pth')
+
+# Make model path absolute if it's relative
+if not os.path.isabs(model_path):
+    model_path = os.path.join(backend_dir, model_path)
+
+# Normalize the path to remove ./ and other artifacts
+model_path = os.path.normpath(model_path)
+
+app.config['MODEL_PATH'] = model_path
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'supersecretkey') # For session management, good practice
 app.config['GEMINI_API_KEY'] = os.getenv('GEMINI_API_KEY') # Get Gemini API key
 

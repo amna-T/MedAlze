@@ -25,7 +25,7 @@ import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext"; // Corrected import path for AuthContext
 import { db } from "@/lib/firebase";
-import { collection, addDoc, serverTimestamp, query, getDocs, where, doc, updateDoc, getDoc, arrayUnion } from "firebase/firestore"; // Import arrayUnion
+import { collection, addDoc, serverTimestamp, query, getDocs, where, doc, updateDoc, getDoc, arrayUnion, CollectionReference, Query, DocumentData, orderBy } from "firebase/firestore"; // Import arrayUnion, CollectionReference, Query, DocumentData, and orderBy
 import { XRayRecord, PatientDocument, UserDocument, Appointment } from "@/types/database";
 import { addNotification } from "@/utils/notificationUtils"; // Corrected import path for addNotification
 import { CONDITIONS_METADATA } from "@/utils/conditionsMetadata";
@@ -76,13 +76,26 @@ export default function UploadXray() {
 
   useEffect(() => {
     const fetchDropdownOptions = async () => {
-      if (!db) {
-        console.warn("UploadXray: Firestore not available. Cannot fetch patient/doctor lists.");
+      if (!db || !user) {
+        console.warn("UploadXray: Firestore not available or user not logged in. Cannot fetch patient/doctor lists.");
         return;
       }
       try {
-        const patientsCollectionRef = collection(db, 'patients');
-        const patientsSnapshot = await getDocs(query(patientsCollectionRef));
+        let patientsQueryRef: CollectionReference<DocumentData> | Query<DocumentData> = collection(db, 'patients');
+        // Radiologists should only see patients assigned to them
+        if (user.role === 'radiologist') {
+          patientsQueryRef = query(patientsQueryRef, where('assignedRadiologistId', '==', user.id));
+        } else if (user.role === 'doctor') {
+          // Doctors can now see patients that have an assigned radiologist
+          patientsQueryRef = query(
+            patientsQueryRef, 
+            where('assignedRadiologistId', '>', ''),
+            orderBy('assignedRadiologistId', 'asc') // Added orderBy to satisfy security rules
+          );
+        }
+        // Admins see all patients (no additional where clause)
+
+        const patientsSnapshot = await getDocs(patientsQueryRef);
         const fetchedPatients: PatientOption[] = patientsSnapshot.docs.map(doc => ({
           id: doc.id,
           name: (doc.data() as PatientDocument).name,
@@ -112,7 +125,7 @@ export default function UploadXray() {
     };
 
     fetchDropdownOptions();
-  }, [db, toast]);
+  }, [db, toast, user]); // Added user to dependency array
 
   useEffect(() => {
     const idFromUrl = searchParams.get('appointmentId');

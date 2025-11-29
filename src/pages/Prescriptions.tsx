@@ -19,7 +19,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 // Removed Layout and Navigation imports
 import { db } from '@/lib/firebase';
-import { collection, query, getDocs, orderBy, Timestamp, where } from 'firebase/firestore';
+import { collection, query, getDocs, Timestamp, where, CollectionReference, Query, DocumentData } from 'firebase/firestore';
 import { Prescription as PrescriptionType, UserDocument, PatientDocument } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { FileText, Calendar, User, Pill } from 'lucide-react';
@@ -33,7 +33,7 @@ const Prescriptions = () => {
   const [prescriptions, setPrescriptions] = useState<DisplayPrescription[]>([]);
   const [selectedPrescription, setSelectedPrescription] = useState<DisplayPrescription | null>(null);
   const [loading, setLoading] = useState(true);
-  const [searchParams, setSearchParams] = useSearchParams(); // Initialize useSearchParams
+  const [searchParams, setSearchParams] = useSearchParams(); // Corrected: Use useSearchParams hook directly
 
   useEffect(() => {
     const fetchPrescriptions = async () => {
@@ -43,8 +43,8 @@ const Prescriptions = () => {
       console.log("Prescriptions: User ID for query:", user?.id); // NEW LOG HERE
       console.log("Prescriptions: User role for query:", user?.role); // NEW LOG HERE
 
-      if (!db) {
-        console.warn("Firestore not available. Cannot fetch prescriptions.");
+      if (!db || !user) {
+        console.warn("Firestore not available or user not logged in. Cannot fetch prescriptions.");
         setLoading(false);
         console.log("--- fetchPrescriptions finished (DB not available) ---");
         return;
@@ -52,10 +52,10 @@ const Prescriptions = () => {
 
       setLoading(true);
       try {
-        let q = query(collection(db, "prescriptions"), orderBy("createdAt", "desc"));
+        let q: CollectionReference<DocumentData> | Query<DocumentData> = collection(db, "prescriptions");
         console.log("Initial query constructed.");
 
-        if (user?.role === 'patient') {
+        if (user.role === 'patient') {
           const patientIdForQuery = user.patientId;
           if (!patientIdForQuery) {
             console.warn("Patient ID not found for current user. Cannot fetch prescriptions.");
@@ -65,7 +65,7 @@ const Prescriptions = () => {
           }
           q = query(q, where("patientId", "==", patientIdForQuery));
           console.log(`Query filtered for patientId: ${patientIdForQuery}`);
-        } else if (user?.role === 'doctor') {
+        } else if (user.role === 'doctor') {
           q = query(q, where("doctorId", "==", user.id));
           console.log(`Query filtered for doctorId: ${user.id}`);
         }
@@ -73,6 +73,13 @@ const Prescriptions = () => {
 
         const querySnapshot = await getDocs(q);
         console.log(`Fetched ${querySnapshot.size} prescription documents.`);
+        
+        // Sort in-memory by createdAt descending to avoid requiring composite index
+        const docs = querySnapshot.docs.sort((a, b) => {
+          const aTime = (a.data() as PrescriptionType).createdAt?.toMillis?.() || 0;
+          const bTime = (b.data() as PrescriptionType).createdAt?.toMillis?.() || 0;
+          return bTime - aTime;
+        });
         const fetchedPrescriptions: DisplayPrescription[] = [];
 
         const userNamesMap = new Map<string, string>();
@@ -80,7 +87,7 @@ const Prescriptions = () => {
         const userIdsToFetch: Set<string> = new Set();
         const patientIdsToFetch: Set<string> = new Set();
 
-        querySnapshot.forEach((doc) => {
+        docs.forEach((doc) => {
           const data = doc.data() as PrescriptionType;
           userIdsToFetch.add(data.doctorId);
           patientIdsToFetch.add(data.patientId);
@@ -99,6 +106,7 @@ const Prescriptions = () => {
         }
 
         if (patientIdsToFetch.size > 0) {
+          console.log(`Prescriptions: Attempting to fetch patient details for IDs: ${Array.from(patientIdsToFetch).join(', ')}`); // NEW LOG
           const patientsCollectionRef = collection(db, 'patients');
           const patientsQuery = query(patientsCollectionRef, where('__name__', 'in', Array.from(patientIdsToFetch)));
           const patientsSnapshot = await getDocs(patientsQuery);
@@ -106,11 +114,11 @@ const Prescriptions = () => {
             const patientData = patientDoc.data();
             patientNamesMap.set(patientDoc.id, patientData.name);
           });
-          console.log("Patient names map:", Object.fromEntries(patientNamesMap));
+          console.log("Prescriptions: Patient names map:", Object.fromEntries(patientNamesMap));
         }
 
 
-        querySnapshot.forEach((doc) => {
+        docs.forEach((doc) => {
           const data = doc.data() as PrescriptionType;
           const prescriptionDate = data.createdAt instanceof Timestamp ? data.createdAt.toDate().toLocaleDateString() : 'N/A';
           const prescription = {

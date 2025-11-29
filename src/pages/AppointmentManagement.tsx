@@ -28,7 +28,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Calendar, Clock, User, CheckCircle, XCircle, Edit, Save, Loader2, Upload, Search, Mail, Phone } from 'lucide-react';
 import { db } from '@/lib/firebase';
-import { collection, query, getDocs, orderBy, Timestamp, doc, updateDoc, where, serverTimestamp, arrayUnion } from 'firebase/firestore'; // Import arrayUnion
+import { collection, query, getDocs, orderBy, Timestamp, doc, updateDoc, where, serverTimestamp, arrayUnion, CollectionReference, Query, DocumentData } from 'firebase/firestore'; // Import CollectionReference, Query, DocumentData
 import { Appointment, UserDocument, PatientDocument } from '@/types/database';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
@@ -65,8 +65,8 @@ const AppointmentManagement = () => {
   const [isSaving, setIsSaving] = useState(false);
 
   const fetchAppointmentsAndUsers = async () => {
-    if (!db) {
-      console.warn("Firestore not available. Cannot fetch appointments or users.");
+    if (!db || !user) {
+      console.warn("Firestore not available or user not logged in. Cannot fetch appointments or users.");
       setLoading(false);
       return;
     }
@@ -83,8 +83,22 @@ const AppointmentManagement = () => {
       setRadiologistOptions(allUsers.filter(u => u.role === 'radiologist'));
       setDoctorOptions(allUsers.filter(u => u.role === 'doctor'));
 
-      // Fetch all patients to get their emails and phones
-      const patientsQuery = query(collection(db, "patients"));
+      // Fetch patients based on user role to comply with security rules
+      let patientsQuery: Query<DocumentData>;
+      if (user.role === 'admin') {
+        // Admins can fetch all patients
+        patientsQuery = query(collection(db, "patients"));
+      } else if (user.role === 'radiologist') {
+        // Radiologists can only see their assigned patients
+        patientsQuery = query(collection(db, "patients"), where('assignedRadiologistId', '==', user.id));
+      } else if (user.role === 'doctor') {
+        // Doctors can see patients that have an assigned radiologist
+        patientsQuery = query(collection(db, "patients"), where('assignedRadiologistId', '!=', null));
+      } else {
+        // Patients can only see their own record
+        patientsQuery = query(collection(db, "patients"), where('userId', '==', user.id));
+      }
+
       const patientsSnapshot = await getDocs(patientsQuery);
       const patientDetailsMap = new Map<string, { name: string; email: string; phone?: string; userId: string | null }>();
       patientsSnapshot.forEach(doc => {
@@ -92,23 +106,99 @@ const AppointmentManagement = () => {
         patientDetailsMap.set(doc.id, { name: data.name, email: data.email, phone: data.phone, userId: data.userId });
       });
 
-      // Fetch appointments
-      const appointmentsQuery = query(collection(db, "appointments"), orderBy("createdAt", "desc"));
-      const appointmentsSnapshot = await getDocs(appointmentsQuery);
-      const fetchedAppointments: DisplayAppointment[] = appointmentsSnapshot.docs.map(doc => {
-        const data = doc.data() as Appointment;
-        const patientInfo = patientDetailsMap.get(data.patientId);
-        
-        return {
-          ...data,
-          id: doc.id,
-          displayCreatedAt: data.createdAt?.toDate().toLocaleDateString() || 'N/A',
-          displayPreferredDate: new Date(data.preferredDate).toLocaleDateString() || 'N/A',
-          patientName: patientInfo?.name || data.patientName, // Use fetched name if available
-          patientEmail: patientInfo?.email || data.patientEmail, // Use fetched email if available
-          patientPhone: patientInfo?.phone || undefined, // Use fetched phone if available
-        };
-      });
+      // Fetch appointments based on user role
+      let appointmentsQueryRef: CollectionReference<DocumentData> | Query<DocumentData> = collection(db, "appointments");
+      let fetchedAppointments: DisplayAppointment[] = [];
+
+      if (user.role === 'radiologist') {
+        // Radiologists must query by patientId and order by createdAt to match security rules
+        // Since we can't use 'in' with multiple patientIds in the security rules, we need to query each patient separately
+        const patientsQueryForRadiologist = query(collection(db, "patients"), where('assignedRadiologistId', '==', user.id));
+        const patientsSnapshotForRadiologist = await getDocs(patientsQueryForRadiologist);
+        const assignedPatientIds = patientsSnapshotForRadiologist.docs.map(doc => doc.id);
+
+        if (assignedPatientIds.length === 0) {
+          console.log("AppointmentManagement: Radiologist has no assigned patients, thus no appointments to display.");
+          setAllAppointments([]);
+          setFilteredAppointments([]);
+          setLoading(false);
+          return;
+        }
+
+        // Query appointments for each assigned patient
+        for (const patientId of assignedPatientIds) {
+          const appointmentQuery = query(
+            collection(db, "appointments"),
+            where('patientId', '==', patientId),
+            orderBy('createdAt', 'desc')
+          );
+          const snapshot = await getDocs(appointmentQuery);
+          snapshot.forEach(doc => {
+            const data = doc.data() as Appointment;
+            const patientInfo = patientDetailsMap.get(data.patientId);
+            fetchedAppointments.push({
+              ...data,
+              id: doc.id,
+              displayCreatedAt: data.createdAt?.toDate().toLocaleDateString() || 'N/A',
+              displayPreferredDate: new Date(data.preferredDate).toLocaleDateString() || 'N/A',
+              patientName: patientInfo?.name || data.patientName,
+              patientEmail: patientInfo?.email || data.patientEmail,
+              patientPhone: patientInfo?.phone || undefined,
+            });
+          });
+        }
+
+        // Sort all appointments by createdAt descending
+        fetchedAppointments.sort((a, b) => {
+          const aTime = a.createdAt instanceof Timestamp ? a.createdAt.toMillis() : 0;
+          const bTime = b.createdAt instanceof Timestamp ? b.createdAt.toMillis() : 0;
+          return bTime - aTime;
+        });
+      } else if (user.role === 'doctor') {
+        // Doctors must query by assignedDoctorId to match security rules
+        appointmentsQueryRef = query(appointmentsQueryRef, where('assignedDoctorId', '==', user.id));
+        const appointmentsSnapshot = await getDocs(query(appointmentsQueryRef, orderBy("createdAt", "desc")));
+        fetchedAppointments = appointmentsSnapshot.docs.map(doc => {
+          const data = doc.data() as Appointment;
+          const patientInfo = patientDetailsMap.get(data.patientId);
+          
+          return {
+            ...data,
+            id: doc.id,
+            displayCreatedAt: data.createdAt?.toDate().toLocaleDateString() || 'N/A',
+            displayPreferredDate: new Date(data.preferredDate).toLocaleDateString() || 'N/A',
+            patientName: patientInfo?.name || data.patientName,
+            patientEmail: patientInfo?.email || data.patientEmail,
+            patientPhone: patientInfo?.phone || undefined,
+          };
+        });
+
+        // Client-side filter for doctors: only show appointments for patients assigned to them
+        if (user.id) {
+          const patientsAssignedToDoctorQuery = query(collection(db, "patients"), where('assignedDoctorIds', 'array-contains', user.id));
+          const patientsAssignedToDoctorSnapshot = await getDocs(patientsAssignedToDoctorQuery);
+          const assignedPatientIds = new Set(patientsAssignedToDoctorSnapshot.docs.map(doc => doc.id));
+          fetchedAppointments = fetchedAppointments.filter(app => assignedPatientIds.has(app.patientId));
+        }
+      } else {
+        // Admins see all appointments
+        const appointmentsSnapshot = await getDocs(query(appointmentsQueryRef, orderBy("createdAt", "desc")));
+        fetchedAppointments = appointmentsSnapshot.docs.map(doc => {
+          const data = doc.data() as Appointment;
+          const patientInfo = patientDetailsMap.get(data.patientId);
+          
+          return {
+            ...data,
+            id: doc.id,
+            displayCreatedAt: data.createdAt?.toDate().toLocaleDateString() || 'N/A',
+            displayPreferredDate: new Date(data.preferredDate).toLocaleDateString() || 'N/A',
+            patientName: patientInfo?.name || data.patientName,
+            patientEmail: patientInfo?.email || data.patientEmail,
+            patientPhone: patientInfo?.phone || undefined,
+          };
+        });
+      }
+
       setAllAppointments(fetchedAppointments);
       setFilteredAppointments(fetchedAppointments); // Initialize filtered list
     } catch (error) {
@@ -125,7 +215,7 @@ const AppointmentManagement = () => {
 
   useEffect(() => {
     fetchAppointmentsAndUsers();
-  }, [db, toast]);
+  }, [db, toast, user]); // Added user to dependency array
 
   useEffect(() => {
     const lowerCaseSearchTerm = searchTerm.toLowerCase();
@@ -302,18 +392,7 @@ const AppointmentManagement = () => {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Patient Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Phone</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Requested Date</TableHead>
-                    <TableHead>Preferred Date</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Assigned Radiologist</TableHead>
-                    <TableHead>Assigned Doctor</TableHead> {/* New column */}
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
+                  <TableRow><TableHead>Patient Name</TableHead><TableHead>Email</TableHead><TableHead>Phone</TableHead><TableHead>Type</TableHead><TableHead>Requested Date</TableHead><TableHead>Preferred Date</TableHead><TableHead>Status</TableHead><TableHead>Assigned Radiologist</TableHead><TableHead>Assigned Doctor</TableHead><TableHead>Actions</TableHead></TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredAppointments.map((appointment) => (
@@ -381,9 +460,8 @@ const AppointmentManagement = () => {
                     <SelectValue placeholder="Assign a radiologist" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Unassigned</SelectItem> {/* Option to unassign */}
                     {radiologistOptions.length === 0 ? (
-                      <SelectItem value="no-radiologists" disabled>No radiologists found</SelectItem>
+                      <SelectItem value="none" disabled>No radiologists found</SelectItem>
                     ) : (
                       radiologistOptions.map((radiologist) => (
                         <SelectItem key={radiologist.id} value={radiologist.id}>
@@ -401,9 +479,8 @@ const AppointmentManagement = () => {
                     <SelectValue placeholder="Assign a doctor" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Unassigned</SelectItem> {/* Option to unassign */}
                     {doctorOptions.length === 0 ? (
-                      <SelectItem value="no-doctors" disabled>No doctors found</SelectItem>
+                      <SelectItem value="none" disabled>No doctors found</SelectItem>
                     ) : (
                       doctorOptions.map((doctor) => (
                         <SelectItem key={doctor.id} value={doctor.id}>

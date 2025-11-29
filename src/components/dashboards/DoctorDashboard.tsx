@@ -52,43 +52,57 @@ const DoctorDashboard = () => {
       setLoadingReports(true);
       setLoadingStats(true);
       try {
-        // 1. Fetch all patients assigned to the current doctor
-        const assignedPatientsQuery = query(
-          collection(db, "patients"),
-          where('assignedDoctorIds', 'array-contains', user.id)
-        );
-        const assignedPatientsSnapshot = await getDocs(assignedPatientsQuery);
-        const allPatients: PatientDocument[] = assignedPatientsSnapshot.docs.map(doc => ({ ...doc.data() as PatientDocument, id: doc.id }));
-        console.log(`DoctorDashboard: Fetched ${allPatients.length} patients assigned to doctor ${user.id}.`);
-        if (allPatients.length > 0) console.log("DoctorDashboard: First assigned patient:", allPatients[0]);
+        // 1. Fetch all patients (doctors can access all patients per security rules)
+        console.log("DoctorDashboard: Attempting to fetch all patients...");
+        const allPatientsQuery = query(collection(db, "patients"));
+        const allPatientsSnapshot = await getDocs(allPatientsQuery);
+        const allPatients: PatientDocument[] = allPatientsSnapshot.docs.map(doc => ({ ...doc.data() as PatientDocument, id: doc.id }));
+        console.log(`DoctorDashboard: Fetched ${allPatients.length} total patients.`);
+        if (allPatients.length > 0) console.log("DoctorDashboard: First patient:", allPatients[0]);
 
-        // Extract unique patient IDs from these patients
-        const relevantPatientIds = new Set(allPatients.map(p => p.id));
-        console.log(`DoctorDashboard: Found ${relevantPatientIds.size} relevant patient IDs from assigned patients.`);
+        // Client-side filter to get only patients assigned to this specific doctor
+        const assignedPatientsToDoctor = allPatients.filter(p => p.assignedDoctorIds?.includes(user.id));
+        const assignedPatientIdsToDoctor = new Set(assignedPatientsToDoctor.map(p => p.id));
+        console.log(`DoctorDashboard: Found ${assignedPatientIdsToDoctor.size} patients specifically assigned to current doctor.`);
+
 
         let allXrays: XRayRecord[] = [];
-        if (relevantPatientIds.size > 0) {
-          // 2. Fetch X-ray records for these specific patients
-          const patientIdsArray = Array.from(relevantPatientIds);
-          const xrayBatches: string[][] = [];
-          // Firestore 'in' query has a limit of 10, so we batch the patient IDs
-          for (let i = 0; i < patientIdsArray.length; i += 10) {
-            xrayBatches.push(patientIdsArray.slice(i, i + 10));
-          }
-
-          for (const batch of xrayBatches) {
-            const batchXraysQuery = query(collection(db, "xrays"), where('patientId', 'in', batch), orderBy("uploadedAt", "desc"));
-            const batchXraysSnapshot = await getDocs(batchXraysQuery);
-            allXrays.push(...batchXraysSnapshot.docs.map(doc => ({ ...doc.data() as XRayRecord, id: doc.id })));
+        if (assignedPatientIdsToDoctor.size > 0) {
+          // 2. Fetch X-ray records for each assigned patient
+          console.log("DoctorDashboard: Attempting to fetch xrays for assigned patients...");
+          try {
+            // Query xrays for each patient individually to match security rules
+            const xrayPromises = Array.from(assignedPatientIdsToDoctor).map(patientId => {
+              console.log(`DoctorDashboard: Fetching xrays for patient: ${patientId}`);
+              return getDocs(query(
+                collection(db, "xrays"),
+                where('patientId', '==', patientId),
+                orderBy("uploadedAt", "desc")
+              ));
+            });
+            
+            const xraySnapshots = await Promise.all(xrayPromises);
+            xraySnapshots.forEach((snapshot, index) => {
+              const patientId = Array.from(assignedPatientIdsToDoctor)[index];
+              console.log(`DoctorDashboard: Fetched ${snapshot.size} xrays for patient ${patientId}`);
+              allXrays.push(...snapshot.docs.map(doc => ({ ...doc.data() as XRayRecord, id: doc.id })));
+            });
+          } catch (xrayError) {
+            console.error("DoctorDashboard: Error fetching xrays:", xrayError);
+            throw xrayError;
           }
         }
-        console.log(`DoctorDashboard: Total X-ray records fetched for relevant patients: ${allXrays.length}.`);
+        console.log(`DoctorDashboard: Total X-ray records fetched for assigned patients: ${allXrays.length}.`);
         if (allXrays.length > 0) console.log("DoctorDashboard: First X-ray record:", allXrays[0]);
+
+        // X-rays are already filtered by patient, so no additional filtering needed
+        const relevantXrays = allXrays;
+        console.log(`DoctorDashboard: Relevant X-rays count: ${relevantXrays.length}`);
 
 
         // Map for patient names
         const patientNamesMap = new Map<string, string>();
-        allPatients.forEach(p => patientNamesMap.set(p.id, p.name));
+        assignedPatientsToDoctor.forEach(p => patientNamesMap.set(p.id, p.name));
 
         // Calculate Stats
         const now = new Date();
@@ -98,16 +112,18 @@ const DoctorDashboard = () => {
         const statusCounts: { [key: string]: number } = { active: 0, monitoring: 0, treatment: 0, inactive: 0, unclaimed: 0 }; // Include unclaimed
         const patientOverviewList: PatientOverviewData[] = [];
 
-        allPatients.forEach(patient => {
+        assignedPatientsToDoctor.forEach(patient => {
+          // Only count patients that are actually assigned to this doctor for "active patients" stat
           if (patient.status === 'active') {
             activePatientsCount++;
           }
+          // Count all patients with an assigned radiologist for status distribution
           if (statusCounts[patient.status] !== undefined) {
             statusCounts[patient.status]++;
           }
 
           // Determine last visit from latest X-ray or mock if no X-ray
-          const patientXrays = allXrays.filter(xray => xray.patientId === patient.id);
+          const patientXrays = relevantXrays.filter(xray => xray.patientId === patient.id);
           const latestXray = patientXrays.sort((a, b) => {
             const dateA = a.uploadedAt?.toDate() || new Date(0);
             const dateB = b.uploadedAt?.toDate() || new Date(0);
@@ -124,9 +140,9 @@ const DoctorDashboard = () => {
           });
         });
 
-        const newReportsCount = allXrays.filter(xray => xray.uploadedAt?.toDate() > sevenDaysAgo).length;
-        const requiresReviewCount = allXrays.filter(xray => xray.status === 'analyzed').length;
-        const reviewedCount = allXrays.filter(xray => xray.status === 'reviewed').length;
+        const newReportsCount = relevantXrays.filter(xray => xray.uploadedAt?.toDate() > sevenDaysAgo).length;
+        const requiresReviewCount = relevantXrays.filter(xray => xray.status === 'analyzed').length;
+        const reviewedCount = relevantXrays.filter(xray => xray.status === 'reviewed').length;
 
         setStats({
           activePatients: activePatientsCount.toString(),
@@ -152,7 +168,7 @@ const DoctorDashboard = () => {
 
 
         // Set Recent Reports (limit to 5, showing analyzed or reviewed)
-        const recentReportsData: DisplayReport[] = allXrays
+        const recentReportsData: DisplayReport[] = relevantXrays
           .filter(xray => xray.status === 'analyzed' || xray.status === 'reviewed')
           .slice(0, 5)
           .map(xray => ({
@@ -165,7 +181,11 @@ const DoctorDashboard = () => {
 
 
       } catch (error) {
-        console.error("DoctorDashboard: Error fetching data for Doctor Dashboard:", error);
+        console.error("DoctorDashboard: Detailed error fetching data:", {
+          message: error instanceof Error ? error.message : String(error),
+          code: (error as any).code,
+          fullError: error
+        });
       } finally {
         setLoadingReports(false);
         setLoadingStats(false);

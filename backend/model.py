@@ -7,8 +7,8 @@ class CheXNet(nn.Module):
     def __init__(self, num_classes=14):
         super(CheXNet, self).__init__()
 
-        # Load pre-trained DenseNet-121 model with ImageNet weights
-        self.model = models.densenet121(weights="None")
+        # Load pre-trained DenseNet-121 model without pre-trained weights
+        self.model = models.densenet121(weights=None)
         
         # Get the number of input features for the classifier layer
         num_ftrs = self.model.classifier.in_features
@@ -51,55 +51,57 @@ def load_densenet_model(model_path: str):
             print(f"ERROR: PyTorch model file not found at: {model_path}. Please ensure the model is correctly placed and MODEL_PATH is set in .env.")
             raise FileNotFoundError(f"AI model file not found at: {model_path}")
             
-        else:
-            print(f"Loading PyTorch CheXNet model from: {model_path}")
+        print(f"Loading PyTorch CheXNet model from: {model_path}")
+        try:
+            _chexnet_model = CheXNet()
+            
+            # Load the raw state_dict from the .pth file
+            print(f"DEBUG: Loading state_dict from {model_path}")
+            state_dict = torch.load(model_path, map_location=torch.device('cpu'))
+            
+            print(f"DEBUG: Keys in loaded state_dict: {list(state_dict.keys())}")
+            print(f"DEBUG: Keys in current model's state_dict: {list(_chexnet_model.state_dict().keys())}")
+
+            # Create a new state_dict to handle potential key mismatches
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                if k.startswith('features.'):
+                    # Prepend 'model.' to feature keys
+                    new_key = 'model.' + k
+                    new_state_dict[new_key] = v
+                    print(f"DEBUG: Renamed state_dict key: '{k}' to '{new_key}'")
+                elif k.startswith('classifier.'):
+                    # For classifier keys, prepend only 'model.'
+                    new_key = 'model.' + k
+                    new_state_dict[new_key] = v
+                    print(f"DEBUG: Renamed state_dict key: '{k}' to '{new_key}'")
+                else:
+                    # For any other keys, keep them as is (e.g., if they already match)
+                    new_state_dict[k] = v
+            
+            print(f"DEBUG: Attempting to load {len(new_state_dict)} keys into model")
+            # Attempt to load the (potentially modified) state_dict
             try:
-                _chexnet_model = CheXNet()
-                
-                # Load the raw state_dict from the .pth file
-                state_dict = torch.load(model_path, map_location=torch.device('cpu'))
-                
-                print(f"DEBUG: Keys in loaded state_dict from {model_path}: {state_dict.keys()}")
-                print(f"DEBUG: Keys in current model's state_dict before loading: {_chexnet_model.state_dict().keys()}")
+                _chexnet_model.load_state_dict(new_state_dict, strict=True)
+                print("DEBUG: State dictionary loaded strictly (all keys matched after renaming).")
+            except RuntimeError as e:
+                print(f"WARNING: Strict state_dict load failed even after renaming: {e}")
+                print("Attempting non-strict load to identify remaining mismatches.")
+                missing_keys, unexpected_keys = _chexnet_model.load_state_dict(new_state_dict, strict=False)
+                if missing_keys:
+                    print(f"WARNING: Missing keys in state_dict: {missing_keys}")
+                if unexpected_keys:
+                    print(f"WARNING: Unexpected keys in state_dict: {unexpected_keys}")
+                print("DEBUG: State dictionary loaded non-strictly.")
 
-                # Create a new state_dict to handle potential key mismatches
-                new_state_dict = {}
-                for k, v in state_dict.items():
-                    if k.startswith('features.'):
-                        # Prepend 'model.' to feature keys
-                        new_key = 'model.' + k
-                        new_state_dict[new_key] = v
-                        print(f"DEBUG: Renamed state_dict key: '{k}' to '{new_key}'")
-                    elif k.startswith('classifier.0.'):
-                        # Prepend 'model.' and remove '.0' for classifier keys
-                        # This handles the case where the original classifier was Sequential(Linear, Sigmoid)
-                        new_key = 'model.classifier.' + k
-                        new_state_dict[new_key] = v
-                        print(f"DEBUG: Renamed state_dict key: '{k}' to '{new_key}'")
-                    else:
-                        # For any other keys, keep them as is (e.g., if they already match)
-                        new_state_dict[k] = v
-                
-                # Attempt to load the (potentially modified) state_dict
-                try:
-                    _chexnet_model.load_state_dict(new_state_dict, strict=True)
-                    print("DEBUG: State dictionary loaded strictly (all keys matched after renaming).")
-                except RuntimeError as e:
-                    print(f"WARNING: Strict state_dict load failed even after renaming: {e}")
-                    print("Attempting non-strict load to identify remaining mismatches.")
-                    missing_keys, unexpected_keys = _chexnet_model.load_state_dict(new_state_dict, strict=False)
-                    if missing_keys:
-                        print(f"WARNING: Missing keys in state_dict: {missing_keys}")
-                    if unexpected_keys:
-                        print(f"WARNING: Unexpected keys in state_dict: {unexpected_keys}")
-                    print("DEBUG: State dictionary loaded non-strictly.")
+            _chexnet_model.eval() # Set model to evaluation mode
+            print("PyTorch CheXNet model loaded successfully.")
 
-                _chexnet_model.eval() # Set model to evaluation mode
-                print("PyTorch CheXNet model loaded successfully.")
-
-            except Exception as e:
-                print(f"ERROR: Failed to load PyTorch model from {model_path}. Error: {e}")
-                raise RuntimeError(f"Failed to load AI model: {e}")
+        except Exception as e:
+            print(f"ERROR: Failed to load PyTorch model from {model_path}. Error: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise RuntimeError(f"Failed to load AI model: {type(e).__name__}: {e}")
     return _chexnet_model
 
 def predict_image(model: CheXNet, image_tensor: torch.Tensor) -> tuple[dict, bool]:

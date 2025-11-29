@@ -14,7 +14,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Search, User, Mail, Phone, Calendar, Fingerprint, Edit, Save, Stethoscope } from 'lucide-react'; // Added Stethoscope
 import { db } from '@/lib/firebase';
-import { collection, query, getDocs, orderBy, serverTimestamp, doc, updateDoc, setDoc, getDoc, where, Timestamp, arrayUnion } from 'firebase/firestore'; // Import arrayUnion
+import { collection, query, getDocs, orderBy, serverTimestamp, doc, updateDoc, setDoc, getDoc, where, Timestamp, arrayUnion, CollectionReference, Query, DocumentData } from 'firebase/firestore'; // Import arrayUnion, CollectionReference, Query, DocumentData
 import { PatientDocument, UserDocument } from '@/types/database'; // Import UserDocument
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -56,7 +56,7 @@ const AdminPatientManagement = () => {
     age: '',
     gender: '',
     status: 'active' as PatientDocument['status'],
-    assignedRadiologistId: '' as string | undefined,
+    assignedRadiologistId: '' as string, // Default to empty string
     assignedDoctorIds: [] as string[], // Initialize as empty array
   });
   const [radiologistOptions, setRadiologistOptions] = useState<UserDocument[]>([]); // State for radiologist options
@@ -97,9 +97,15 @@ const AdminPatientManagement = () => {
       const doctorNamesMap = new Map<string, string>();
       fetchedDoctors.forEach(d => doctorNamesMap.set(d.id, d.name));
 
-      // Fetch patients
-      const patientsQuery = query(collection(db, "patients"), orderBy("createdAt", "desc"));
-      const patientsSnapshot = await getDocs(patientsQuery);
+      // Fetch patients based on user role
+      let patientsQueryRef: CollectionReference<DocumentData> | Query<DocumentData> = collection(db, "patients");
+      if (user?.role === 'radiologist') {
+        // Radiologists can only see patients they are assigned to
+        patientsQueryRef = query(patientsQueryRef, where('assignedRadiologistId', '==', user.id));
+      }
+      // Admins see all patients (no additional where clause)
+
+      const patientsSnapshot = await getDocs(query(patientsQueryRef, orderBy("createdAt", "desc")));
       const fetchedPatients: DisplayPatient[] = patientsSnapshot.docs.map(doc => {
         const data = doc.data() as PatientDocument;
         // Safely convert createdAt to Date if it's a Timestamp, otherwise handle as string or null
@@ -138,7 +144,7 @@ const AdminPatientManagement = () => {
 
   useEffect(() => {
     fetchPatientsAndUsers();
-  }, [db, toast]);
+  }, [db, toast, user]); // Added user to dependency array
 
   const handleEditClick = (patient: DisplayPatient) => {
     setEditingPatient(patient);
@@ -149,7 +155,7 @@ const AdminPatientManagement = () => {
       age: patient.age?.toString() || '',
       gender: patient.gender || '',
       status: patient.status,
-      assignedRadiologistId: patient.assignedRadiologistId,
+      assignedRadiologistId: patient.assignedRadiologistId || '', // Ensure it's a string
       assignedDoctorIds: patient.assignedDoctorIds || [], // Load existing assigned doctors
     });
     setSelectedDoctorToAdd(''); // Reset add doctor select
@@ -170,7 +176,7 @@ const AdminPatientManagement = () => {
       toast({
         title: 'Missing Information',
         description: 'Patient name and email cannot be empty.',
-        variant: 'destructive',
+        variant: 'destructive'
       });
       return;
     }
@@ -192,7 +198,7 @@ const AdminPatientManagement = () => {
         age: editedPatientData.age ? parseInt(editedPatientData.age) : null,
         gender: editedPatientData.gender || null,
         status: editedPatientData.status,
-        assignedRadiologistId: editedPatientData.assignedRadiologistId || null,
+        assignedRadiologistId: editedPatientData.assignedRadiologistId || '', // Ensure it's a string (UID or '')
         assignedRadiologistName: assignedRadiologist?.name || null,
         assignedDoctorIds: updatedAssignedDoctorIds, // Update assigned doctors array
       });
@@ -456,17 +462,16 @@ const AdminPatientManagement = () => {
             <div className="space-y-2">
               <Label htmlFor="edit-assigned-radiologist">Assigned Radiologist</Label>
               <Select
-                value={editedPatientData.assignedRadiologistId || ''}
-                onValueChange={(value) => setEditedPatientData({ ...editedPatientData, assignedRadiologistId: value || undefined })}
+                value={editedPatientData.assignedRadiologistId} // Use empty string for 'Unassigned'
+                onValueChange={(value) => setEditedPatientData({ ...editedPatientData, assignedRadiologistId: value })}
                 disabled={isSaving}
               >
                 <SelectTrigger id="edit-assigned-radiologist">
                   <SelectValue placeholder="Assign a radiologist" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Unassigned</SelectItem> {/* Option to unassign */}
                   {radiologistOptions.length === 0 ? (
-                    <SelectItem value="no-radiologists" disabled>No radiologists found</SelectItem>
+                    <SelectItem value="none" disabled>No radiologists found</SelectItem>
                   ) : (
                     radiologistOptions.map((radiologist) => (
                       <SelectItem key={radiologist.id} value={radiologist.id}>
@@ -507,9 +512,8 @@ const AdminPatientManagement = () => {
                   <SelectValue placeholder="Add a doctor" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="" disabled>Select a doctor to add</SelectItem>
                   {doctorOptions.length === 0 ? (
-                    <SelectItem value="no-doctors" disabled>No doctors found</SelectItem>
+                    <SelectItem value="none" disabled>No doctors found</SelectItem>
                   ) : (
                     doctorOptions
                       .filter(d => !editedPatientData.assignedDoctorIds.includes(d.id)) // Only show unassigned doctors

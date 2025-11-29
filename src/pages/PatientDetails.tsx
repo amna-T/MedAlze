@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { User, Mail, Phone, Calendar, FileText, Activity, ArrowLeft, Stethoscope } from 'lucide-react'; // Added Stethoscope
 import { db } from '@/lib/firebase';
-import { doc, getDoc, collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, orderBy, Timestamp, Query, DocumentData } from 'firebase/firestore';
 import { PatientDocument, XRayRecord } from '@/types/database';
 import { useToast } from '@/hooks/use-toast';
 import { CONDITIONS_METADATA } from '@/utils/conditionsMetadata';
@@ -76,21 +76,41 @@ const PatientDetails = () => {
         });
 
         // Fetch patient's X-ray records
-        let xraysQuery = query(
-          collection(db, 'xrays'),
-          where('patientId', '==', patientId),
-          orderBy('uploadedAt', 'desc')
-        );
+        let xraysQuery: Query<DocumentData>;
 
-        // IMPORTANT: Add a filter for doctors to only see X-rays assigned to them
         if (user.role === 'doctor' && user.id) {
-          xraysQuery = query(xraysQuery, where('assignedDoctorId', '==', user.id));
+          // Doctors must filter by assignedDoctorId in the Firestore query
+          xraysQuery = query(
+            collection(db, 'xrays'),
+            where('assignedDoctorId', '==', user.id),
+            orderBy('uploadedAt', 'desc')
+          );
           console.log(`PatientDetails: Doctor user. Filtering X-rays for assignedDoctorId: ${user.id}`);
+        } else if (user.role === 'radiologist' && user.id) {
+          // Radiologists must filter by patientId to match security rules
+          xraysQuery = query(
+            collection(db, 'xrays'),
+            where('patientId', '==', patientId),
+            orderBy('uploadedAt', 'desc')
+          );
+          console.log(`PatientDetails: Radiologist user. Filtering X-rays for patientId: ${patientId}`);
+        } else if (user.role === 'admin') {
+          // Admins can see all X-rays for the patient
+          xraysQuery = query(
+            collection(db, 'xrays'),
+            where('patientId', '==', patientId),
+            orderBy('uploadedAt', 'desc')
+          );
+          console.log(`PatientDetails: Admin user. Filtering X-rays for patientId: ${patientId}`);
+        } else {
+          // Fallback for other roles or unhandled cases
+          setXrays([]);
+          setLoading(false);
+          return;
         }
-        // Radiologists and Admins can see all X-rays for the patient, so no additional filter needed for them.
 
         const xraysSnapshot = await getDocs(xraysQuery);
-        const fetchedXrays: DisplayXRay[] = xraysSnapshot.docs.map(doc => {
+        let fetchedXrays: DisplayXRay[] = xraysSnapshot.docs.map(doc => {
           const data = doc.data() as XRayRecord;
           return {
             ...data,
@@ -98,6 +118,14 @@ const PatientDetails = () => {
             displayDate: data.uploadedAt?.toDate().toLocaleDateString() || 'N/A',
           };
         });
+
+        // Client-side filter for doctors to ensure X-rays belong to the current patientId
+        // This is necessary because the Firestore query for doctors is broader (by assignedDoctorId)
+        if (user.role === 'doctor' && user.id) {
+          fetchedXrays = fetchedXrays.filter(xray => xray.patientId === patientId);
+          console.log(`PatientDetails: Doctor user. Client-side filtered X-rays for patientId: ${patientId}. Count: ${fetchedXrays.length}`);
+        }
+
         setXrays(fetchedXrays);
 
       } catch (err) {

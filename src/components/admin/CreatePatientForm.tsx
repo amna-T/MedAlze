@@ -40,8 +40,8 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
   const isRadiologistCreating = user?.role === 'radiologist';
 
   // State for assigned radiologist, only relevant if an admin is using the form
-  const [selectedAssignedRadiologistId, setSelectedAssignedRadiologistId] = useState<string | undefined>(
-    isRadiologistCreating ? user.id : undefined // Default to current radiologist if applicable
+  const [selectedAssignedRadiologistId, setSelectedAssignedRadiologistId] = useState<string>(
+    isRadiologistCreating && user?.id ? user.id : '' // Default to current radiologist if applicable, otherwise empty string
   );
   const [generatedPatientId, setGeneratedPatientId] = useState<string | null>(null);
 
@@ -50,15 +50,15 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
     if (isRadiologistCreating && user?.id) {
       setSelectedAssignedRadiologistId(user.id);
     } else if (!isRadiologistCreating) {
-      // If not a radiologist, ensure it's undefined initially for admin to select
-      setSelectedAssignedRadiologistId(undefined);
+      // If not a radiologist, ensure it's empty string initially for admin to select
+      setSelectedAssignedRadiologistId('');
     }
   }, [user, isRadiologistCreating]);
 
   // Effect to ensure the selected radiologist is valid if options change (for admin)
   useEffect(() => {
     if (!isRadiologistCreating && selectedAssignedRadiologistId && !radiologistOptions.some(r => r.id === selectedAssignedRadiologistId)) {
-      setSelectedAssignedRadiologistId(undefined);
+      setSelectedAssignedRadiologistId('');
     }
   }, [radiologistOptions, selectedAssignedRadiologistId, isRadiologistCreating]);
 
@@ -83,7 +83,7 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
       return;
     }
 
-    let finalAssignedRadiologistId: string | undefined;
+    let finalAssignedRadiologistId: string;
     let finalAssignedRadiologistName: string | undefined;
 
     if (isRadiologistCreating) {
@@ -93,19 +93,17 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
     } else {
       // Admin is creating, so use the selected value from the dropdown
       if (!selectedAssignedRadiologistId) {
-        toast({
-          title: 'Missing Information',
-          description: 'Please assign a radiologist to the new patient.',
-          variant: 'destructive'
-        });
-        return;
+        // If selectedAssignedRadiologistId is empty, it means 'Unassigned' was chosen
+        finalAssignedRadiologistId = ''; // Store as empty string
+        finalAssignedRadiologistName = undefined;
+      } else {
+        const assignedRadiologist = radiologistOptions.find(r => r.id === selectedAssignedRadiologistId);
+        if (!assignedRadiologist) {
+          throw new Error('Selected radiologist not found in options. Please re-select.');
+        }
+        finalAssignedRadiologistId = assignedRadiologist.id;
+        finalAssignedRadiologistName = assignedRadiologist.name;
       }
-      const assignedRadiologist = radiologistOptions.find(r => r.id === selectedAssignedRadiologistId);
-      if (!assignedRadiologist) {
-        throw new Error('Selected radiologist not found in options. Please re-select.');
-      }
-      finalAssignedRadiologistId = assignedRadiologist.id;
-      finalAssignedRadiologistName = assignedRadiologist.name;
     }
 
     setIsCreatingPatient(true);
@@ -141,8 +139,8 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
         gender: newPatientData.gender || null,
         createdAt: serverTimestamp(),
         status: 'unclaimed',
-        assignedRadiologistId: finalAssignedRadiologistId,
-        assignedRadiologistName: finalAssignedRadiologistName,
+        assignedRadiologistId: finalAssignedRadiologistId, // Ensure this is a string (UID or '')
+        assignedRadiologistName: finalAssignedRadiologistName || null,
         assignedDoctorIds: [], // Initialize assignedDoctorIds as an empty array
       });
 
@@ -173,7 +171,7 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
         gender: '',
       });
       // Reset selected radiologist state for the next creation (if admin)
-      setSelectedAssignedRadiologistId(isRadiologistCreating ? user.id : undefined); 
+      setSelectedAssignedRadiologistId(isRadiologistCreating && user?.id ? user.id : ''); 
       onPatientCreated();
     } catch (error) {
       console.error('Error creating patient record:', error);
@@ -269,17 +267,16 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
             <div className="space-y-2">
               <Label htmlFor="assigned-radiologist">Assign Radiologist</Label>
               <Select
-                value={selectedAssignedRadiologistId ?? "unassigned-option"} // Use "unassigned-option" if undefined for display
-                onValueChange={(value) => setSelectedAssignedRadiologistId(value === "unassigned-option" ? undefined : value)}
+                value={selectedAssignedRadiologistId} // Use empty string for 'Unassigned'
+                onValueChange={(value) => setSelectedAssignedRadiologistId(value)}
                 disabled={isCreatingPatient || (radiologistOptions?.length === 0)}
               >
                 <SelectTrigger id="assigned-radiologist">
                   <SelectValue placeholder="Select a radiologist" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="unassigned-option">Unassigned</SelectItem> {/* Use a distinct string value */}
                   {(radiologistOptions?.length === 0) ? (
-                    <SelectItem value="no-radiologists" disabled>No radiologists found</SelectItem>
+                    <SelectItem value="none" disabled>No radiologists found</SelectItem>
                   ) : (
                     radiologistOptions?.map((radiologist) => (
                       <SelectItem key={radiologist.id} value={radiologist.id}>
@@ -297,7 +294,7 @@ const CreatePatientForm = ({ onPatientCreated, radiologistOptions }: CreatePatie
           <Button 
             type="submit" 
             className="w-full" 
-            disabled={isCreatingPatient || !newPatientData.name || !newPatientData.email || (!isRadiologistCreating && !selectedAssignedRadiologistId)}
+            disabled={isCreatingPatient || !newPatientData.name || !newPatientData.email || (!isRadiologistCreating && radiologistOptions?.length > 0 && !selectedAssignedRadiologistId)}
           >
             <UserPlus className="mr-2 h-4 w-4" />
             {isCreatingPatient ? 'Creating...' : 'Create Patient Record'}

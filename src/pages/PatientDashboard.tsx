@@ -56,7 +56,7 @@ const PatientDashboard = () => {
         const appointmentsQuery = query(
           collection(db, 'appointments'),
           where('patientId', '==', patientIdForQuery),
-          orderBy('preferredDate', 'desc') // Order by preferred date for upcoming
+          orderBy('createdAt', 'desc') // Order by createdAt to match list rule
         );
         const appointmentsSnapshot = await getDocs(appointmentsQuery);
         const patientAppointments: Appointment[] = appointmentsSnapshot.docs.map(doc => ({ ...doc.data() as Appointment, id: doc.id }));
