@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: medalze-backend
+    env: python
+    plan: free
+    pythonVersion: 3.10
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 app:app
+    envVars:
+      - key: FLASK_APP
+        value: app.py
+      - key: FLASK_ENV
+        value: production
+      - key: MODEL_PATH
+        value: model/chexnet.pth
+      - key: GEMINI_API_KEY
+        sync: false
