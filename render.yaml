@@ -1,7 +1,7 @@
 services:
   - type: web
     name: medalze-backend
-    runtime: python-3.10
+    runtime: python
     plan: free
     buildCommand: pip install -r backend/requirements.txt
     startCommand: cd backend && gunicorn -w 1 app:app
