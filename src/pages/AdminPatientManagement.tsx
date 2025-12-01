@@ -328,56 +328,103 @@ const AdminPatientManagement = () => {
             ) : filteredPatients.length === 0 ? (
               <p className="text-center text-muted-foreground py-8">No patient records found.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Patient ID</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Radiologist</TableHead>
-                      <TableHead>Doctors</TableHead> {/* New column */}
-                      <TableHead>Created At</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredPatients.map((patient) => (
-                      <TableRow key={patient.id}>
-                        <TableCell className="font-medium">{patient.id}</TableCell>
-                        <TableCell>{patient.name}</TableCell>
-                        <TableCell>{patient.email}</TableCell>
-                        <TableCell>
+              <>
+                {/* Desktop Table View */}
+                <div className="hidden md:block overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Patient ID</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Radiologist</TableHead>
+                        <TableHead>Doctors</TableHead>
+                        <TableHead>Created At</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredPatients.map((patient) => (
+                        <TableRow key={patient.id}>
+                          <TableCell className="font-medium">{patient.id}</TableCell>
+                          <TableCell>{patient.name}</TableCell>
+                          <TableCell>{patient.email}</TableCell>
+                          <TableCell>
+                            <Badge className={getStatusBadgeClass(patient.status)}>
+                              {patient.status.charAt(0).toUpperCase() + patient.status.slice(1)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{patient.assignedRadiologistName || 'N/A'}</TableCell>
+                          <TableCell>
+                            {patient.assignedDoctorNames && patient.assignedDoctorNames.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {patient.assignedDoctorNames.map((doctorName, idx) => (
+                                  <Badge key={idx} variant="secondary" className="bg-medical-info/20 text-medical-info">
+                                    {doctorName}
+                                  </Badge>
+                                ))}
+                              </div>
+                            ) : 'N/A'}
+                          </TableCell>
+                          <TableCell>{patient.displayCreatedAt}</TableCell>
+                          <TableCell>
+                            {canManagePatients && (
+                              <Button variant="outline" size="sm" onClick={() => handleEditClick(patient)}>
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Mobile Card View */}
+                <div className="md:hidden space-y-3">
+                  {filteredPatients.map((patient) => (
+                    <Card key={patient.id} className="p-4 border">
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-semibold text-base">{patient.name}</p>
+                            <p className="text-xs text-muted-foreground">{patient.id}</p>
+                          </div>
                           <Badge className={getStatusBadgeClass(patient.status)}>
                             {patient.status.charAt(0).toUpperCase() + patient.status.slice(1)}
                           </Badge>
-                        </TableCell>
-                        <TableCell>{patient.assignedRadiologistName || 'N/A'}</TableCell>
-                        <TableCell>
-                          {patient.assignedDoctorNames && patient.assignedDoctorNames.length > 0 ? (
-                            <div className="flex flex-wrap gap-1">
-                              {patient.assignedDoctorNames.map((doctorName, idx) => (
-                                <Badge key={idx} variant="secondary" className="bg-medical-info/20 text-medical-info">
-                                  {doctorName}
-                                </Badge>
-                              ))}
-                            </div>
-                          ) : 'N/A'}
-                        </TableCell>
-                        <TableCell>{patient.displayCreatedAt}</TableCell>
-                        <TableCell>
-                          {canManagePatients && (
-                            <Button variant="outline" size="sm" onClick={() => handleEditClick(patient)}>
-                              <Edit className="h-4 w-4" />
+                        </div>
+                        
+                        <div className="text-sm space-y-1">
+                          <p className="text-muted-foreground"><Mail className="inline h-3 w-3 mr-1" />{patient.email}</p>
+                          <p className="text-muted-foreground"><Calendar className="inline h-3 w-3 mr-1" />{patient.displayCreatedAt}</p>
+                          <p className="text-muted-foreground"><Stethoscope className="inline h-3 w-3 mr-1" />{patient.assignedRadiologistName || 'Unassigned'}</p>
+                        </div>
+
+                        {patient.assignedDoctorNames && patient.assignedDoctorNames.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {patient.assignedDoctorNames.map((doctorName, idx) => (
+                              <Badge key={idx} variant="secondary" className="text-xs bg-medical-info/20 text-medical-info">
+                                {doctorName}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+
+                        {canManagePatients && (
+                          <div className="pt-2">
+                            <Button variant="outline" size="sm" className="w-full" onClick={() => handleEditClick(patient)}>
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit
                             </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                          </div>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
