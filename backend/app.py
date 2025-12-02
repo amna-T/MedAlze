@@ -16,21 +16,15 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Configure CORS for specific origins
-CORS(app, resources={
-    r"/*": {
-        "origins": [
-            "https://medalze.vercel.app",
-            "https://*.vercel.app",
-            "http://localhost:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:5173"
-        ],
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
-    }
-})
+# Configure CORS with simple allow-all approach for now
+# In production, restrict this to specific origins
+cors_config = {
+    "origins": ["*"],
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization"],
+    "expose_headers": ["Content-Type"],
+}
+CORS(app, resources={r"/*": cors_config})
 
 # Configuration from environment variables
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'static/uploads')
@@ -110,6 +104,28 @@ def index():
         "model_loaded": chexnet_model is not None, # Changed variable name
         "gemini_initialized": gemini_model is not None
     })
+
+@app.route('/health', methods=['GET'])
+def health():
+    """
+    Health check endpoint.
+    """
+    return jsonify({
+        "status": "healthy",
+        "model_loaded": chexnet_model is not None,
+        "gemini_initialized": gemini_model is not None
+    }), 200
+
+@app.before_request
+def before_request():
+    """Handle preflight CORS requests."""
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response, 200
 
 @app.route('/predict', methods=['POST'])
 def predict():
