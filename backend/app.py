@@ -1,7 +1,6 @@
 import os
 import gc
 from flask import Flask, request, jsonify, send_from_directory, make_response
-from flask_cors import CORS
 from dotenv import load_dotenv
 import uuid
 import torch
@@ -21,34 +20,26 @@ app = Flask(__name__)
 # Set max file size to 50MB
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
-# Enable CORS for all routes with explicit configuration
-CORS(app, 
-     resources={r"/*": {"origins": "*"}},
-     methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-     allow_headers=["*"],
-     expose_headers=["*"],
-     supports_credentials=False,
-     max_age=3600,
-     send_wildcard=True)
-
-# Additional manual CORS headers to ensure they're always present
+# CORS middleware - handle all requests
 @app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
+def before_request():
+    """Handle preflight requests"""
+    if request.method == 'OPTIONS':
         response = make_response()
         response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-        response.headers['Access-Control-Max-Age'] = '3600'
-        return response
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, HEAD'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Content-Length'
+        response.headers['Access-Control-Max-Age'] = '86400'
+        return response, 200
 
 @app.after_request
-def add_cors_headers(response):
+def after_request(response):
+    """Add CORS headers to all responses"""
     response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
-    response.headers['Access-Control-Max-Age'] = '3600'
-    response.headers['Access-Control-Expose-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, HEAD'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Content-Length'
+    response.headers['Access-Control-Expose-Headers'] = '*'
+    response.headers['Access-Control-Max-Age'] = '86400'
     return response
 
 # Configuration from environment variables
