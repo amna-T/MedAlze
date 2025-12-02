@@ -16,15 +16,8 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Configure CORS with simple allow-all approach for now
-# In production, restrict this to specific origins
-cors_config = {
-    "origins": ["*"],
-    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    "allow_headers": ["Content-Type", "Authorization"],
-    "expose_headers": ["Content-Type"],
-}
-CORS(app, resources={r"/*": cors_config})
+# Note: We handle CORS manually in before_request and after_request handlers
+# This gives us more control over headers and compatibility with Render
 
 # Configuration from environment variables
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'static/uploads')
@@ -130,13 +123,22 @@ def before_request():
     """Handle preflight CORS requests."""
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin', '*'))
-        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
         response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        response.headers.add('Access-Control-Max-Age', '3600')
         return response, 200
 
-@app.route('/predict', methods=['POST'])
+@app.after_request
+def after_request(response):
+    """Add CORS headers to all responses."""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    response.headers.add('Access-Control-Max-Age', '3600')
+    return response
+
+@app.route('/predict', methods=['POST', 'OPTIONS'])
 def predict():
     """
     Endpoint to accept an uploaded chest X-ray image and return disease probabilities.
@@ -202,7 +204,7 @@ def predict():
     else:
         return jsonify({"error": "Invalid file type. Allowed types: png, jpg, jpeg, gif"}), 400
 
-@app.route('/generate_report', methods=['POST'])
+@app.route('/generate_report', methods=['POST', 'OPTIONS'])
 def generate_report_endpoint():
     """
     Endpoint to generate a medical report using Gemini AI based on analysis results and patient info.
