@@ -15,7 +15,22 @@ from utils import preprocess_image
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app) # Enable CORS for all routes
+
+# Configure CORS for specific origins
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "https://medalze.vercel.app",
+            "https://*.vercel.app",
+            "http://localhost:5173",
+            "http://localhost:3000",
+            "http://127.0.0.1:5173"
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 # Configuration from environment variables
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'static/uploads')
