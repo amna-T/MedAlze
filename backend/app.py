@@ -60,12 +60,23 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # Load the model once when the app starts
-try:
-    chexnet_model = load_densenet_model(app.config['MODEL_PATH']) # Changed variable name
-    print("DEBUG: CheXNet model loaded successfully in app.py.")
-except Exception as e:
-    print(f"ERROR: Failed to load AI model on startup: {e}")
-    chexnet_model = None # Set to None if loading fails
+# NOTE: On Render's free tier, loading the model on startup can cause timeout issues
+# So we'll load it lazily on first use instead
+chexnet_model = None
+
+def ensure_model_loaded():
+    """Lazy load the model on first use."""
+    global chexnet_model
+    if chexnet_model is None:
+        try:
+            print("Loading CheXNet model on first request...")
+            chexnet_model = load_densenet_model(app.config['MODEL_PATH'])
+            print("DEBUG: CheXNet model loaded successfully.")
+        except Exception as e:
+            print(f"ERROR: Failed to load AI model: {e}")
+            chexnet_model = None
+            raise
+    return chexnet_model
 
 # Initialize Gemini AI
 gemini_model = None
@@ -99,16 +110,22 @@ def index():
     """
     Root endpoint to check if the server is running.
     """
+    try:
+        model = ensure_model_loaded()
+        model_loaded = model is not None
+    except:
+        model_loaded = False
+    
     return jsonify({
         "status": "MedAlze Flask API is running!",
-        "model_loaded": chexnet_model is not None, # Changed variable name
+        "model_loaded": model_loaded,
         "gemini_initialized": gemini_model is not None
     })
 
 @app.route('/health', methods=['GET'])
 def health():
     """
-    Health check endpoint.
+    Health check endpoint (doesn't load the model).
     """
     return jsonify({
         "status": "healthy",
@@ -132,7 +149,12 @@ def predict():
     """
     Endpoint to accept an uploaded chest X-ray image and return disease probabilities.
     """
-    if chexnet_model is None: # Changed variable name
+    try:
+        model = ensure_model_loaded()
+    except Exception as e:
+        return jsonify({"error": f"AI model failed to load: {e}"}), 500
+    
+    if model is None:
         return jsonify({"error": "AI model not loaded. Please check server logs."}), 500
 
     if 'file' not in request.files:
@@ -156,7 +178,7 @@ def predict():
             print(f"DEBUG: Image preprocessed. Shape: {preprocessed_image.shape}, Dtype: {preprocessed_image.dtype}")
 
             # Run inference
-            disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image) # Changed variable name
+            disease_probabilities, no_significant_finding = predict_image(model, preprocessed_image)
             
             # --- DEBUGGING START ---
             # Find the top prediction for logging
