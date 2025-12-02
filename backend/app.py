@@ -21,8 +21,13 @@ app = Flask(__name__)
 # Set max file size to 50MB
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
-# Enable CORS for all routes - this is the most reliable approach
-CORS(app, origins=["*"], supports_credentials=False)
+# Enable CORS for all routes with explicit configuration
+CORS(app, 
+     origins=["*"],
+     methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
+     allow_headers=["Content-Type", "Authorization"],
+     supports_credentials=False,
+     max_age=3600)
 
 # Configuration from environment variables
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'static/uploads')
