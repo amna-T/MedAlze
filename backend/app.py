@@ -45,7 +45,8 @@ app.config['GEMINI_API_KEY'] = os.getenv('GEMINI_API_KEY') # Get Gemini API key
 # --- DEBUGGING START ---
 print(f"DEBUG: GEMINI_API_KEY from .env: {app.config['GEMINI_API_KEY']}")
 print(f"DEBUG: MODEL_PATH from .env: {app.config['MODEL_PATH']}")
-print("DEBUG: Backend initialization complete - API key loaded successfully")
+print("DEBUG: Backend initialization complete - NEW unrestricted API key loaded")
+print("DEBUG: Gemini API configured and ready for report generation")
 # --- DEBUGGING END ---
 
 # Ensure upload folder exists
