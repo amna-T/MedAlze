@@ -84,25 +84,23 @@ if app.config['GEMINI_API_KEY']:
     try:
         # Configure the API key globally before initializing the model
         genai.configure(api_key=app.config['GEMINI_API_KEY'])
-        
-        # List available models for debugging
-        print("\n--- Listing Available Gemini Models ---")
-        for m in genai.list_models():
-            if "generateContent" in m.supported_generation_methods:
-                print(f"- {m.name} (Supports generateContent)")
-            else:
-                print(f"- {m.name}")
-        print("-------------------------------------\n")
-
-        # Use 'gemini-pro-latest' as it's explicitly listed and supports generateContent
-        gemini_model = genai.GenerativeModel(model_name='gemini-pro-latest')
-        print("DEBUG: Gemini AI model 'gemini-pro-latest' initialized successfully.")
+        # Use 'gemini-2.5-flash' for better performance
+        gemini_model = genai.GenerativeModel(model_name='gemini-2.5-flash')
+        print("DEBUG: Gemini AI model initialized successfully.")
     except Exception as e:
-        # --- DEBUGGING START ---
-        print(f"ERROR: Failed to initialize Gemini AI model with provided API key. Error details: {e}")
-        # --- DEBUGGING END ---
+        print(f"ERROR: Failed to initialize Gemini AI model: {e}")
 else:
     print("WARNING: GEMINI_API_KEY not found in environment variables. Report generation will not work.")
+
+# Load the CheXNet model eagerly
+print("Loading CheXNet model on startup...")
+chexnet_model = None
+try:
+    chexnet_model = load_densenet_model(app.config['MODEL_PATH'])
+    print("DEBUG: CheXNet model loaded successfully on startup.")
+except Exception as e:
+    print(f"ERROR: Failed to load CheXNet model: {e}")
+    print("WARNING: Model will attempt to load on first request.")
 
 
 @app.route('/')
@@ -110,15 +108,9 @@ def index():
     """
     Root endpoint to check if the server is running.
     """
-    try:
-        model = ensure_model_loaded()
-        model_loaded = model is not None
-    except:
-        model_loaded = False
-    
     return jsonify({
         "status": "MedAlze Flask API is running!",
-        "model_loaded": model_loaded,
+        "model_loaded": chexnet_model is not None,
         "gemini_initialized": gemini_model is not None
     })
 
@@ -149,10 +141,14 @@ def predict():
     """
     Endpoint to accept an uploaded chest X-ray image and return disease probabilities.
     """
-    try:
-        model = ensure_model_loaded()
-    except Exception as e:
-        return jsonify({"error": f"AI model failed to load: {e}"}), 500
+    # Use eager-loaded model, or lazy-load if needed
+    model = chexnet_model
+    if model is None:
+        try:
+            print("Model not loaded at startup. Attempting lazy load...")
+            model = ensure_model_loaded()
+        except Exception as e:
+            return jsonify({"error": f"AI model failed to load: {e}"}), 500
     
     if model is None:
         return jsonify({"error": "AI model not loaded. Please check server logs."}), 500
