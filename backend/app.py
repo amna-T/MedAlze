@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
 import uuid
@@ -88,15 +88,9 @@ if app.config['GEMINI_API_KEY']:
 else:
     print("WARNING: GEMINI_API_KEY not found in environment variables. Report generation will not work.")
 
-# Load the CheXNet model eagerly
-print("Loading CheXNet model on startup...")
-chexnet_model = None
-try:
-    chexnet_model = load_densenet_model(app.config['MODEL_PATH'])
-    print("DEBUG: CheXNet model loaded successfully on startup.")
-except Exception as e:
-    print(f"ERROR: Failed to load CheXNet model: {e}")
-    print("WARNING: Model will attempt to load on first request.")
+# IMPORTANT: Do NOT load model on startup - only load on first request
+# This prevents timeout issues on Render's free tier
+print("Backend initialized. Model will be loaded on first prediction request.")
 
 
 @app.route('/')
@@ -135,8 +129,22 @@ def test():
 @app.before_request
 def before_request():
     """Handle preflight CORS requests."""
+    print(f"DEBUG: Request received - Method: {request.method}, Path: {request.path}, Origin: {request.origin}")
     if request.method == 'OPTIONS':
-        return '', 204
+        response = make_response('', 204)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PUT, DELETE'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+
+@app.after_request
+def after_request(response):
+    """Add CORS headers to every response."""
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PUT, DELETE'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Max-Age'] = '3600'
+    return response
 
 @app.route('/predict', methods=['POST'])
 def predict():
