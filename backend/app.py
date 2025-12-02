@@ -1,8 +1,10 @@
 import os
+import gc
 from flask import Flask, request, jsonify, send_from_directory, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
 import uuid
+import torch
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import json # Import the json module
@@ -235,6 +237,12 @@ def predict():
             disease_probabilities, no_significant_finding = predict_image(model, preprocessed_image)
             print(f"DEBUG: Inference complete")
             
+            # Clear memory after inference
+            del preprocessed_image
+            torch.cuda.empty_cache()
+            gc.collect()
+            print("DEBUG: Memory freed after inference")
+            
             # Return results
             return jsonify({
                 "status": "success",
@@ -257,6 +265,11 @@ def predict():
                     print(f"DEBUG: Temp file removed")
                 except Exception as e:
                     print(f"WARNING: Failed to remove temp file: {e}")
+            
+            # Force memory cleanup on exit
+            gc.collect()
+            torch.cuda.empty_cache()
+            print("DEBUG: Final cleanup complete")
                     
     except Exception as e:
         print(f"ERROR: Critical exception in /predict: {type(e).__name__}: {e}")

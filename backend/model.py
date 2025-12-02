@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 from torchvision import models
-import os # Import os for path checking
+import os
+import numpy as np
 
 class CheXNet(nn.Module):
     def __init__(self, num_classes=14):
@@ -113,16 +114,22 @@ def predict_image(model: CheXNet, image_tensor: torch.Tensor) -> tuple[dict, boo
         raise ValueError("AI model is not loaded.")
     
     model.eval() # Ensure model is in evaluation mode
+    
+    # Convert to float32 for inference (more stable than float16 for this model)
+    image_tensor = image_tensor.float()
+    
     with torch.no_grad(): # Disable gradient calculation for inference
-        output = model(image_tensor)
-        # IMPORTANT: Remove redundant sigmoid here, as it's now part of the model's classifier
-        probabilities = output.squeeze(0).tolist() 
+        # Run inference with CPU (explicit)
+        with torch.inference_mode():
+            output = model(image_tensor.cpu())
+            # Detach output immediately to free memory
+            probabilities = output.squeeze(0).detach().cpu().numpy().tolist()
 
     # Map probabilities to condition names
     predictions = {CONDITIONS[i]: prob for i, prob in enumerate(probabilities)}
 
     # Determine if there's no significant finding based on the highest probability
-    max_probability = max(predictions.values()) # Use predictions.values() as probabilities is now raw list
+    max_probability = max(predictions.values())
     no_significant_finding = max_probability < NO_FINDING_THRESHOLD
     
     return predictions, no_significant_finding
