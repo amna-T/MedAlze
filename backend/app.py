@@ -118,6 +118,17 @@ def health():
         "gemini_initialized": gemini_model is not None
     }), 200
 
+@app.route('/test', methods=['GET', 'POST'])
+def test():
+    """
+    Simple test endpoint to verify CORS and connectivity.
+    """
+    return jsonify({
+        "status": "ok",
+        "message": "Backend is responding correctly",
+        "method": request.method
+    }), 200
+
 @app.before_request
 def before_request():
     """Handle preflight CORS requests."""
@@ -129,66 +140,83 @@ def predict():
     """
     Endpoint to accept an uploaded chest X-ray image and return disease probabilities.
     """
-    # Use eager-loaded model, or lazy-load if needed
-    model = chexnet_model
-    if model is None:
-        try:
-            print("Model not loaded at startup. Attempting lazy load...")
-            model = ensure_model_loaded()
-        except Exception as e:
-            return jsonify({"error": f"AI model failed to load: {e}"}), 500
-    
-    if model is None:
-        return jsonify({"error": "AI model not loaded. Please check server logs."}), 500
+    try:
+        print(f"DEBUG: /predict endpoint called. Method: {request.method}")
+        
+        # Use eager-loaded model, or lazy-load if needed
+        model = chexnet_model
+        if model is None:
+            try:
+                print("Model not loaded at startup. Attempting lazy load...")
+                model = ensure_model_loaded()
+            except Exception as e:
+                print(f"ERROR: Model lazy load failed: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({"error": f"AI model failed to load: {e}"}), 500
+        
+        if model is None:
+            return jsonify({"error": "AI model not loaded. Please check server logs."}), 500
 
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part in the request"}), 400
-    
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    
-    if file and allowed_file(file.filename):
-        try: 
-            # Save the uploaded file temporarily
-            filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
-            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(filepath)
-            print(f"DEBUG: File saved temporarily at {filepath}")
+        if 'file' not in request.files:
+            print("ERROR: No file part in request")
+            return jsonify({"error": "No file part in the request"}), 400
+        
+        file = request.files['file']
+        print(f"DEBUG: File received: {file.filename}")
+        
+        if file.filename == '':
+            print("ERROR: No selected file")
+            return jsonify({"error": "No selected file"}), 400
+        
+        if file and allowed_file(file.filename):
+            try: 
+                # Save the uploaded file temporarily
+                filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
+                filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(filepath)
+                print(f"DEBUG: File saved temporarily at {filepath}")
 
-            # Preprocess the image
-            preprocessed_image = preprocess_image(filepath)
-            print(f"DEBUG: Image preprocessed. Shape: {preprocessed_image.shape}, Dtype: {preprocessed_image.dtype}")
+                # Preprocess the image
+                preprocessed_image = preprocess_image(filepath)
+                print(f"DEBUG: Image preprocessed. Shape: {preprocessed_image.shape}, Dtype: {preprocessed_image.dtype}")
 
-            # Run inference
-            disease_probabilities, no_significant_finding = predict_image(model, preprocessed_image)
+                # Run inference
+                disease_probabilities, no_significant_finding = predict_image(model, preprocessed_image)
+                
+                # Find the top prediction for logging
+                top_condition = max(disease_probabilities, key=disease_probabilities.get)
+                top_confidence = disease_probabilities[top_condition]
+                print(f"DEBUG: CheXNet Top Prediction: {top_condition} with confidence {top_confidence:.4f}. No significant finding flag: {no_significant_finding}")
+
+                # Clean up the temporary file
+                os.remove(filepath)
+                print(f"DEBUG: Temporary file {filepath} removed.")
+
+                return jsonify({
+                    "status": "success",
+                    "predictions": disease_probabilities,
+                    "conditions_order": CONDITIONS,
+                    "no_significant_finding": no_significant_finding
+                }), 200
+
+            except FileNotFoundError as e:
+                print(f"ERROR: File not found: {e}")
+                return jsonify({"error": str(e)}), 404
+            except Exception as e:
+                print(f"ERROR: Prediction error: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({"error": f"Error during prediction: {e}"}), 500
+        else:
+            print(f"ERROR: Invalid file type: {file.filename}")
+            return jsonify({"error": "Invalid file type. Allowed types: png, jpg, jpeg, gif"}), 400
             
-            # --- DEBUGGING START ---
-            # Find the top prediction for logging
-            top_condition = max(disease_probabilities, key=disease_probabilities.get)
-            top_confidence = disease_probabilities[top_condition]
-            print(f"DEBUG: CheXNet Top Prediction: {top_condition} with confidence {top_confidence:.4f}. No significant finding flag: {no_significant_finding}")
-            # --- DEBUGGING END ---
-
-            # Clean up the temporary file
-            os.remove(filepath)
-            print(f"DEBUG: Temporary file {filepath} removed.")
-
-            return jsonify({
-                "status": "success",
-                "predictions": disease_probabilities,
-                "conditions_order": CONDITIONS, # To ensure frontend knows the order
-                "no_significant_finding": no_significant_finding # Include the new flag
-            }), 200
-
-        except FileNotFoundError as e:
-            return jsonify({"error": str(e)}), 404
-        except Exception as e:
-            print(f"Prediction error: {e}")
-            return jsonify({"error": f"Error during prediction: {e}"}), 500
-    else:
-        return jsonify({"error": "Invalid file type. Allowed types: png, jpg, jpeg, gif"}), 400
+    except Exception as e:
+        print(f"ERROR: Unhandled exception in /predict: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"Unexpected error: {e}"}), 500
 
 @app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
