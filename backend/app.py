@@ -16,8 +16,8 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Note: We handle CORS manually in before_request and after_request handlers
-# This gives us more control over headers and compatibility with Render
+# Enable CORS for all routes - this is the most reliable approach
+CORS(app, origins=["*"], supports_credentials=False)
 
 # Configuration from environment variables
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'static/uploads')
@@ -122,23 +122,9 @@ def health():
 def before_request():
     """Handle preflight CORS requests."""
     if request.method == 'OPTIONS':
-        response = jsonify({'status': 'ok'})
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Max-Age', '3600')
-        return response, 200
+        return '', 204
 
-@app.after_request
-def after_request(response):
-    """Add CORS headers to all responses."""
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-    response.headers.add('Access-Control-Max-Age', '3600')
-    return response
-
-@app.route('/predict', methods=['POST', 'OPTIONS'])
+@app.route('/predict', methods=['POST'])
 def predict():
     """
     Endpoint to accept an uploaded chest X-ray image and return disease probabilities.
@@ -204,7 +190,7 @@ def predict():
     else:
         return jsonify({"error": "Invalid file type. Allowed types: png, jpg, jpeg, gif"}), 400
 
-@app.route('/generate_report', methods=['POST', 'OPTIONS'])
+@app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
     """
     Endpoint to generate a medical report using Gemini AI based on analysis results and patient info.
