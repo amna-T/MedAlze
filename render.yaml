@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && gunicorn -w 1 app:app
+    startCommand: cd backend && gunicorn -w 1 --timeout 120 --graceful-timeout 30 app:app
     envVars:
       - key: FLASK_APP
         value: app.py
