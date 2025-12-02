@@ -392,17 +392,33 @@ const AppointmentManagement = () => {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow><TableHead>Patient Name</TableHead><TableHead>Email</TableHead><TableHead>Phone</TableHead><TableHead>Type</TableHead><TableHead>Requested Date</TableHead><TableHead>Preferred Date</TableHead><TableHead>Status</TableHead><TableHead>Assigned Radiologist</TableHead><TableHead>Assigned Doctor</TableHead><TableHead>Actions</TableHead></TableRow>
+                  <TableRow>
+                    <TableHead>Patient Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Requested Date</TableHead>
+                    <TableHead>Preferred Date</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Assigned Radiologist</TableHead>
+                    <TableHead>Assigned Doctor</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredAppointments.map((appointment) => (
                     <TableRow key={appointment.id}>
                       <TableCell className="font-medium">{appointment.patientName}</TableCell>
-                      <TableCell className="text-muted-foreground flex items-center gap-1">
-                        <Mail className="h-3 w-3" /> {appointment.patientEmail}
+                      <TableCell className="text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          <Mail className="h-3 w-3" /> {appointment.patientEmail}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground flex items-center gap-1">
-                        {appointment.patientPhone ? <Phone className="h-3 w-3" /> : null} {appointment.patientPhone || 'N/A'}
+                      <TableCell className="text-muted-foreground">
+                        <div className="flex items-center gap-1">
+                          {appointment.patientPhone ? <Phone className="h-3 w-3" /> : null}
+                          <span>{appointment.patientPhone || 'N/A'}</span>
+                        </div>
                       </TableCell>
                       <TableCell>{appointment.examType ? appointment.examType.replace(/_/g, ' ') : appointment.type.replace(/_/g, ' ')}</TableCell>
                       <TableCell>{appointment.displayCreatedAt}</TableCell>
