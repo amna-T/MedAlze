@@ -52,8 +52,6 @@ const Layout = () => {
               <h1 className="text-xl font-bold">MedAlze</h1>
               <p className="text-xs text-muted-foreground capitalize">{user?.role} Portal</p>
             </div>
-            {/* Temporary visible debug message for user role */}
-            {user && <span className="ml-4 text-sm text-primary">Role: {user.role}</span>}
           </div>
           
           <div className="flex items-center gap-4">
