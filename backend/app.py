@@ -1,6 +1,7 @@
 import os
 import gc
 from flask import Flask, request, jsonify, send_from_directory, make_response
+from flask_cors import CORS
 from dotenv import load_dotenv
 import uuid
 import torch
@@ -20,27 +21,8 @@ app = Flask(__name__)
 # Set max file size to 50MB
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
-# CORS middleware - handle all requests
-@app.before_request
-def before_request():
-    """Handle preflight requests"""
-    if request.method == 'OPTIONS':
-        response = make_response()
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, HEAD'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Content-Length'
-        response.headers['Access-Control-Max-Age'] = '86400'
-        return response, 200
-
-@app.after_request
-def after_request(response):
-    """Add CORS headers to all responses"""
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, HEAD'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Content-Length'
-    response.headers['Access-Control-Expose-Headers'] = '*'
-    response.headers['Access-Control-Max-Age'] = '86400'
-    return response
+# Enable CORS for all routes - simple and reliable
+CORS(app, origins=["*"], supports_credentials=False)
 
 # Configuration from environment variables
 app.config['UPLOAD_FOLDER'] = os.getenv('UPLOAD_FOLDER', 'static/uploads')
