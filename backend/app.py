@@ -142,7 +142,20 @@ def debug_info():
         "upload_folder_exists": os.path.exists(app.config['UPLOAD_FOLDER']),
         "model_path": app.config['MODEL_PATH'],
         "model_path_exists": os.path.exists(app.config['MODEL_PATH']),
-        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
+        "timestamp": __import__('datetime').datetime.utcnow().isoformat(),
+        "routes": [str(rule) for rule in app.url_map.iter_rules()]
+    }), 200
+
+@app.route('/ready', methods=['GET'])
+def ready():
+    """
+    Simple endpoint to check if backend is ready for requests.
+    """
+    return jsonify({
+        "ready": True,
+        "predict_endpoint": "/predict",
+        "model_loaded": chexnet_model is not None,
+        "accept": "multipart/form-data with 'file' field"
     }), 200
 
 @app.before_request
@@ -402,14 +415,20 @@ def generate_report_endpoint():
 # Global error handlers
 @app.errorhandler(400)
 def bad_request(error):
+    print(f"DEBUG: 400 Bad Request: {error}")
     return jsonify({"error": "Bad Request", "message": str(error)}), 400
 
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({"error": "Not Found", "message": str(error)}), 404
+    print(f"DEBUG: 404 Not Found: {request.method} {request.path}")
+    print(f"DEBUG: Available routes: {[str(rule) for rule in app.url_map.iter_rules()]}")
+    return jsonify({"error": "Not Found", "message": f"Path {request.path} not found", "method": request.method}), 404
 
 @app.errorhandler(500)
 def internal_server_error(error):
+    print(f"DEBUG: 500 Internal Server Error: {error}")
+    import traceback
+    traceback.print_exc()
     return jsonify({"error": "Internal Server Error", "message": str(error)}), 500
 
 if __name__ == '__main__':
