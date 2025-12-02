@@ -268,10 +268,8 @@ sequenceDiagram
 
     User->>Frontend: Enter Email & Password
     Frontend->>Firebase Auth: Sign In
-    Firebase Auth->>Firebase Auth: Verify Credentials
     Firebase Auth-->>Frontend: JWT Token + User Info
     
-    Frontend->>Frontend: Store JWT in Memory/SessionStorage
     Frontend->>Firestore: Fetch User Document
     Firestore-->>Frontend: User Data (role, permissions)
     
