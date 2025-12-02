@@ -202,86 +202,67 @@ def predict():
             print(f"ERROR: Invalid file type: {file.filename}")
             return jsonify({"error": "Invalid file type. Allowed types: png, jpg, jpeg, gif"}), 400
         
-        # Now try to load model and process
+        filepath = None
         try:
-            # Use eager-loaded model, or lazy-load if needed
+            # Load or ensure model is loaded
+            print("DEBUG: Checking model state...")
             model = chexnet_model
             if model is None:
+                print("DEBUG: Model not loaded, attempting lazy load...")
                 try:
-                    print("Model not loaded. Attempting lazy load...")
                     model = ensure_model_loaded()
+                    print("DEBUG: Model loaded successfully")
                 except Exception as e:
-                    print(f"ERROR: Model lazy load failed: {e}")
+                    print(f"ERROR: Model loading failed: {e}")
                     import traceback
                     traceback.print_exc()
-                    return jsonify({"error": f"AI model failed to load: {str(e)[:200]}"}), 503
+                    return jsonify({"error": f"Model load failed: {str(e)[:100]}"}), 503
             
-            if model is None:
-                return jsonify({"error": "AI model not loaded"}), 503
-            
-            # Save the uploaded file temporarily
+            # Save file
+            print("DEBUG: Saving file...")
             filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+            print(f"DEBUG: File saved at {filepath}")
             
-            try:
-                file.save(filepath)
-                print(f"DEBUG: File saved temporarily at {filepath}")
-            except Exception as e:
-                print(f"ERROR: Failed to save file: {e}")
-                return jsonify({"error": f"Failed to save file: {str(e)[:100]}"}), 500
+            # Preprocess
+            print("DEBUG: Preprocessing image...")
+            preprocessed_image = preprocess_image(filepath)
+            print(f"DEBUG: Image preprocessed successfully")
             
-            try:
-                # Preprocess the image
-                preprocessed_image = preprocess_image(filepath)
-                print(f"DEBUG: Image preprocessed. Shape: {preprocessed_image.shape}, Dtype: {preprocessed_image.dtype}")
-
-                # Run inference
-                disease_probabilities, no_significant_finding = predict_image(model, preprocessed_image)
-                
-                # Find the top prediction for logging
-                top_condition = max(disease_probabilities, key=disease_probabilities.get)
-                top_confidence = disease_probabilities[top_condition]
-                print(f"DEBUG: CheXNet Top Prediction: {top_condition} with confidence {top_confidence:.4f}. No significant finding flag: {no_significant_finding}")
-
-                response = jsonify({
-                    "status": "success",
-                    "predictions": disease_probabilities,
-                    "conditions_order": CONDITIONS,
-                    "no_significant_finding": no_significant_finding
-                })
-                response.status_code = 200
-                return response
-
-            except FileNotFoundError as e:
-                print(f"ERROR: File not found: {e}")
-                import traceback
-                traceback.print_exc()
-                return jsonify({"error": f"File not found: {str(e)[:100]}"}), 404
-            except Exception as e:
-                print(f"ERROR: Prediction error: {e}")
-                import traceback
-                traceback.print_exc()
-                return jsonify({"error": f"Error during prediction: {str(e)[:200]}"}), 500
-            finally:
-                # Always clean up temp file
-                try:
-                    if os.path.exists(filepath):
-                        os.remove(filepath)
-                        print(f"DEBUG: Temporary file {filepath} removed.")
-                except Exception as cleanup_error:
-                    print(f"WARNING: Failed to clean up temp file: {cleanup_error}")
-                    
+            # Predict
+            print("DEBUG: Running inference...")
+            disease_probabilities, no_significant_finding = predict_image(model, preprocessed_image)
+            print(f"DEBUG: Inference complete")
+            
+            # Return results
+            return jsonify({
+                "status": "success",
+                "predictions": disease_probabilities,
+                "conditions_order": CONDITIONS,
+                "no_significant_finding": no_significant_finding
+            }), 200
+            
         except Exception as e:
-            print(f"ERROR: Unhandled exception in /predict processing: {e}")
+            print(f"ERROR in /predict processing: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
-            return jsonify({"error": f"Unexpected error: {str(e)[:200]}"}), 500
-            
+            return jsonify({"error": f"Prediction error: {str(e)[:100]}"}), 500
+        
+        finally:
+            # Always clean up temp file
+            if filepath and os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                    print(f"DEBUG: Temp file removed")
+                except Exception as e:
+                    print(f"WARNING: Failed to remove temp file: {e}")
+                    
     except Exception as e:
-        print(f"ERROR: Critical exception in /predict endpoint: {e}")
+        print(f"ERROR: Critical exception in /predict: {type(e).__name__}: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": "Critical server error"}), 500
+        return jsonify({"error": "Critical error"}), 500
 
 @app.route('/generate_report', methods=['POST'])
 def generate_report_endpoint():
