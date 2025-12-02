@@ -16,6 +16,9 @@ load_dotenv()
 
 app = Flask(__name__)
 
+# Set max file size to 50MB
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+
 # Enable CORS for all routes - this is the most reliable approach
 CORS(app, origins=["*"], supports_credentials=False)
 
