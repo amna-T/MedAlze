@@ -82,13 +82,18 @@ def ensure_model_loaded():
 gemini_model = None
 if app.config['GEMINI_API_KEY']:
     try:
+        # Show first and last 10 chars of key for debugging
+        key = app.config['GEMINI_API_KEY']
+        key_preview = f"{key[:10]}...{key[-10:]}" if len(key) > 20 else "***"
+        print(f"DEBUG: Initializing Gemini with API key: {key_preview}")
+        
         # Configure the API key globally before initializing the model
         genai.configure(api_key=app.config['GEMINI_API_KEY'])
-        # Use 'gemini-2.5-flash' for better performance
-        gemini_model = genai.GenerativeModel(model_name='gemini-2.5-flash')
-        print("DEBUG: Gemini AI model initialized successfully.")
+        # Use 'gemini-1.5-flash' for better performance and reliability
+        gemini_model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        print("DEBUG: Gemini AI model initialized successfully with gemini-1.5-flash")
     except Exception as e:
-        print(f"ERROR: Failed to initialize Gemini AI model: {e}")
+        print(f"ERROR: Failed to initialize Gemini AI model: {type(e).__name__}: {e}")
 else:
     print("WARNING: GEMINI_API_KEY not found in environment variables. Report generation will not work.")
 
