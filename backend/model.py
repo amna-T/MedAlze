@@ -44,54 +44,59 @@ _chexnet_model = None
 
 def load_densenet_model(model_path: str):
     """
-    Loads the PyTorch CheXNet model from the .pth file.
+    Loads the PyTorch CheXNet model from the .pth file with memory optimizations.
     """
     global _chexnet_model
     if _chexnet_model is None:
         if not model_path or not os.path.exists(model_path):
-            print(f"ERROR: PyTorch model file not found at: {model_path}. Please ensure the model is correctly placed and MODEL_PATH is set in .env.")
+            print(f"ERROR: PyTorch model file not found at: {model_path}.")
             raise FileNotFoundError(f"AI model file not found at: {model_path}")
             
         print(f"Loading PyTorch CheXNet model from: {model_path}")
         try:
+            import gc
+            gc.collect()  # Force garbage collection before loading
+            
             _chexnet_model = CheXNet()
             
-            # Load the raw state_dict from the .pth file
-            print(f"DEBUG: Loading state_dict from {model_path}")
+            # Load state_dict with minimal memory overhead
+            print(f"Loading state_dict...")
             state_dict = torch.load(model_path, map_location=torch.device('cpu'))
             
-            # Create a new state_dict to handle potential key mismatches
+            # Create new state_dict with key renaming
             new_state_dict = {}
             for k, v in state_dict.items():
-                if k.startswith('features.'):
-                    new_key = 'model.' + k
-                    new_state_dict[new_key] = v
-                elif k.startswith('classifier.'):
-                    new_key = 'model.' + k
-                    new_state_dict[new_key] = v
+                if k.startswith(('features.', 'classifier.')):
+                    new_state_dict['model.' + k] = v
                 else:
                     new_state_dict[k] = v
             
-            # Attempt to load the state_dict
-            try:
-                _chexnet_model.load_state_dict(new_state_dict, strict=True)
-                print("DEBUG: State dictionary loaded strictly.")
-            except RuntimeError as e:
-                print(f"WARNING: Strict load failed: {e}")
-                _chexnet_model.load_state_dict(new_state_dict, strict=False)
-                print("DEBUG: State dictionary loaded non-strictly.")
+            # Load state dict
+            _chexnet_model.load_state_dict(new_state_dict, strict=False)
 
-            _chexnet_model.eval()  # Set model to evaluation mode
-            _chexnet_model = _chexnet_model.to(torch.device('cpu'))  # Ensure on CPU
+            # Optimize for inference
+            _chexnet_model.eval()
+            _chexnet_model = _chexnet_model.to(torch.device('cpu'))
             
             # Disable gradients to save memory
             for param in _chexnet_model.parameters():
                 param.requires_grad = False
             
-            print("PyTorch CheXNet model loaded successfully and optimized for inference.")
+            # Convert to float16 for memory efficiency (if supported)
+            try:
+                _chexnet_model = _chexnet_model.half()
+                print("Model converted to float16 for memory efficiency.")
+            except Exception as e:
+                print(f"Could not convert to float16: {e}. Using float32.")
+            
+            # Clear memory
+            del state_dict, new_state_dict
+            gc.collect()
+            
+            print("CheXNet model loaded successfully with memory optimizations.")
 
         except Exception as e:
-            print(f"ERROR: Failed to load PyTorch model from {model_path}. Error: {type(e).__name__}: {e}")
+            print(f"ERROR: Failed to load model: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
             raise RuntimeError(f"Failed to load AI model: {type(e).__name__}: {e}")
@@ -105,17 +110,14 @@ def predict_image(model: CheXNet, image_tensor: torch.Tensor) -> tuple[dict, boo
     if model is None:
         raise ValueError("AI model is not loaded.")
     
-    model.eval() # Ensure model is in evaluation mode
+    model.eval()
     
-    # Convert to float32 for inference (more stable than float16 for this model)
-    image_tensor = image_tensor.float()
-    
-    with torch.no_grad(): # Disable gradient calculation for inference
-        # Run inference with CPU (explicit)
+    with torch.no_grad():
         with torch.inference_mode():
+            # Convert to same dtype as model (could be float16 or float32)
+            image_tensor = image_tensor.to(next(model.parameters()).dtype)
             output = model(image_tensor.cpu())
-            # Detach output immediately to free memory
-            probabilities = output.squeeze(0).detach().cpu().numpy().tolist()
+            probabilities = output.squeeze(0).detach().cpu().float().numpy().tolist()
 
     # Map probabilities to condition names
     predictions = {CONDITIONS[i]: prob for i, prob in enumerate(probabilities)}
