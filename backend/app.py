@@ -23,19 +23,32 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 # Enable CORS for all routes with explicit configuration
 CORS(app, 
-     origins=["*"],
+     resources={r"/*": {"origins": "*"}},
      methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-     allow_headers=["Content-Type", "Authorization"],
+     allow_headers=["*"],
+     expose_headers=["*"],
      supports_credentials=False,
-     max_age=3600)
+     max_age=3600,
+     send_wildcard=True)
 
-# Additional manual CORS headers for safety
+# Additional manual CORS headers to ensure they're always present
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Max-Age'] = '3600'
+        return response
+
 @app.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Max-Age'] = '3600'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Type'
     return response
 
 # Configuration from environment variables
