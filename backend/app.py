@@ -60,23 +60,16 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # Load the model once when the app starts
-# NOTE: On Render's free tier, loading the model on startup can cause timeout issues
-# So we'll load it lazily on first use instead
-chexnet_model = None
-
-def ensure_model_loaded():
-    """Lazy load the model on first use."""
-    global chexnet_model
-    if chexnet_model is None:
-        try:
-            print("Loading CheXNet model on first request...")
-            chexnet_model = load_densenet_model(app.config['MODEL_PATH'])
-            print("DEBUG: CheXNet model loaded successfully.")
-        except Exception as e:
-            print(f"ERROR: Failed to load AI model: {e}")
-            chexnet_model = None
-            raise
-    return chexnet_model
+print("DEBUG: Preloading CheXNet model at startup...")
+try:
+    chexnet_model = load_densenet_model(app.config['MODEL_PATH'])
+    print("DEBUG: CheXNet model loaded successfully at startup.")
+except Exception as e:
+    print(f"ERROR: Failed to load AI model at startup: {e}")
+    import traceback
+    traceback.print_exc()
+    chexnet_model = None
+    raise
 
 # Initialize Gemini AI
 gemini_model = None
@@ -97,9 +90,7 @@ if app.config['GEMINI_API_KEY']:
 else:
     print("WARNING: GEMINI_API_KEY not found in environment variables. Report generation will not work.")
 
-# IMPORTANT: Do NOT load model on startup - only load on first request
-# This prevents timeout issues on Render's free tier
-print("Backend initialized. Model will be loaded on first prediction request.")
+print("Backend initialized successfully. CheXNet model is preloaded and ready.")
 
 
 @app.route('/')
@@ -213,19 +204,11 @@ def predict():
         
         filepath = None
         try:
-            # Load or ensure model is loaded
-            print("DEBUG: Checking model state...")
-            model = chexnet_model
-            if model is None:
-                print("DEBUG: Model not loaded, attempting lazy load...")
-                try:
-                    model = ensure_model_loaded()
-                    print("DEBUG: Model loaded successfully")
-                except Exception as e:
-                    print(f"ERROR: Model loading failed: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    return jsonify({"error": f"Model load failed: {str(e)[:100]}"}), 503
+            # Check if model is loaded
+            if chexnet_model is None:
+                return jsonify({"error": "Model not loaded. Server initialization incomplete."}), 503
+            
+            print("DEBUG: Model available for prediction")
             
             # Save file
             print("DEBUG: Saving file...")
@@ -241,7 +224,7 @@ def predict():
             
             # Predict
             print("DEBUG: Running inference...")
-            disease_probabilities, no_significant_finding = predict_image(model, preprocessed_image)
+            disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
             print(f"DEBUG: Inference complete")
             
             # Clear memory after inference

@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: medalze-backend
+    name: medalze-api-v2
     runtime: python
     plan: free
     buildCommand: pip install -r backend/requirements.txt
