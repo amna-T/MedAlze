@@ -63,7 +63,14 @@ def allowed_file(filename):
 print("DEBUG: Preloading CheXNet model at startup...")
 try:
     chexnet_model = load_densenet_model(app.config['MODEL_PATH'])
-    print("DEBUG: CheXNet model loaded successfully at startup.")
+    # Optimize model for inference
+    chexnet_model.eval()  # Set to evaluation mode
+    # Disable gradients to save memory
+    for param in chexnet_model.parameters():
+        param.requires_grad = False
+    print("DEBUG: CheXNet model loaded and optimized for inference at startup.")
+    # Force garbage collection after loading
+    gc.collect()
 except Exception as e:
     print(f"ERROR: Failed to load AI model at startup: {e}")
     import traceback
@@ -222,14 +229,16 @@ def predict():
             preprocessed_image = preprocess_image(filepath)
             print(f"DEBUG: Image preprocessed successfully")
             
-            # Predict
+            # Predict with no_grad context to minimize memory
             print("DEBUG: Running inference...")
-            disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
+            with torch.no_grad():
+                disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
             print(f"DEBUG: Inference complete")
             
             # Clear memory after inference
             del preprocessed_image
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             gc.collect()
             print("DEBUG: Memory freed after inference")
             
