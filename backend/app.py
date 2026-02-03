@@ -235,7 +235,13 @@ def predict():
             
             # Predict
             print("DEBUG: Running inference...")
-            disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
+            try:
+                disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower():
+                    print(f"ERROR: Out of memory during inference: {e}")
+                    return jsonify({"error": "Server out of memory. Please try again in a moment."}), 503
+                raise
             print(f"DEBUG: Inference complete")
             
             # Clear memory after inference
