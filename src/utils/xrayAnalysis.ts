@@ -36,15 +36,58 @@ export interface AnalysisResult {
  * @param imageFile The File object of the X-ray image.
  * @returns A Promise that resolves to an AnalysisResult object.
  */
+/**
+ * Retry logic for backend requests with exponential backoff
+ */
+const retryFetch = async (
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 3,
+  baseDelayMs: number = 1000
+): Promise<Response> => {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      // Only retry on 502/503 (server errors), not 4xx errors
+      if (response.status === 502 || response.status === 503) {
+        if (attempt < maxRetries - 1) {
+          const delayMs = baseDelayMs * Math.pow(2, attempt);
+          console.warn(`Backend unavailable (${response.status}), retrying in ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          continue;
+        }
+      }
+      return response;
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < maxRetries - 1) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt);
+        console.warn(`Fetch error, retrying in ${delayMs}ms...`, error);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error('Max retries exceeded');
+};
+
 export const analyzeXRay = async (imageFile: File): Promise<AnalysisResult> => {
   try {
     const formData = new FormData();
     formData.append('file', imageFile);
 
-    const response = await fetch(`${FLASK_BACKEND_URL}/predict`, {
-      method: 'POST',
-      body: formData,
-    });
+    const response = await retryFetch(
+      `${FLASK_BACKEND_URL}/predict`,
+      {
+        method: 'POST',
+        body: formData,
+      },
+      3, // maxRetries
+      1000 // baseDelayMs
+    );
 
     if (!response.ok) {
       const errorText = await response.text();

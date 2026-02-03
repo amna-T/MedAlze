@@ -6,6 +6,44 @@ import { CONDITIONS_METADATA } from './conditionsMetadata'; // Keep this for sen
 // Define the Flask backend URL
 const FLASK_BACKEND_URL = import.meta.env.VITE_FLASK_BACKEND_URL || 'http://localhost:5000';
 
+/**
+ * Retry logic for backend requests with exponential backoff
+ */
+const retryFetch = async (
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 3,
+  baseDelayMs: number = 1000
+): Promise<Response> => {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      // Only retry on 502/503 (server errors), not 4xx errors
+      if (response.status === 502 || response.status === 503) {
+        if (attempt < maxRetries - 1) {
+          const delayMs = baseDelayMs * Math.pow(2, attempt);
+          console.warn(`Backend unavailable (${response.status}), retrying in ${delayMs}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          continue;
+        }
+      }
+      return response;
+    } catch (error) {
+      lastError = error as Error;
+      if (attempt < maxRetries - 1) {
+        const delayMs = baseDelayMs * Math.pow(2, attempt);
+        console.warn(`Fetch error, retrying in ${delayMs}ms...`, error);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        continue;
+      }
+    }
+  }
+
+  throw lastError || new Error('Max retries exceeded');
+};
+
 interface AnalysisResults {
   condition: Condition;
   confidence: number;
@@ -32,17 +70,22 @@ export const generateReport = async (
   }
 ): Promise<GeneratedReport> => {
   try {
-    const response = await fetch(`${FLASK_BACKEND_URL}/generate_report`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const response = await retryFetch(
+      `${FLASK_BACKEND_URL}/generate_report`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          analysisResults,
+          patientInfo,
+          conditionsMetadata: CONDITIONS_METADATA, // Send metadata to backend for prompt construction
+        }),
       },
-      body: JSON.stringify({
-        analysisResults,
-        patientInfo,
-        conditionsMetadata: CONDITIONS_METADATA, // Send metadata to backend for prompt construction
-      }),
-    });
+      3, // maxRetries
+      1000 // baseDelayMs
+    );
 
     if (!response.ok) {
       const errorData = await response.json();
