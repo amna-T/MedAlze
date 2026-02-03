@@ -63,12 +63,9 @@ def allowed_file(filename):
 print("DEBUG: Preloading CheXNet model at startup...")
 try:
     chexnet_model = load_densenet_model(app.config['MODEL_PATH'])
-    # Optimize model for inference
-    chexnet_model.eval()  # Set to evaluation mode
-    # Disable gradients to save memory
-    for param in chexnet_model.parameters():
-        param.requires_grad = False
-    print("DEBUG: CheXNet model loaded and optimized for inference at startup.")
+    # Set to evaluation mode (disables dropout, batch norm updates)
+    chexnet_model.eval()
+    print("DEBUG: CheXNet model loaded and set to eval mode at startup.")
     # Force garbage collection after loading
     gc.collect()
 except Exception as e:
@@ -229,10 +226,9 @@ def predict():
             preprocessed_image = preprocess_image(filepath)
             print(f"DEBUG: Image preprocessed successfully")
             
-            # Predict with no_grad context to minimize memory
+            # Predict
             print("DEBUG: Running inference...")
-            with torch.no_grad():
-                disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
+            disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
             print(f"DEBUG: Inference complete")
             
             # Clear memory after inference
