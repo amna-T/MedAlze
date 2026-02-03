@@ -87,10 +87,13 @@ if app.config['GEMINI_API_KEY']:
         # Configure the API key globally before initializing the model
         genai.configure(api_key=app.config['GEMINI_API_KEY'])
         # Use 'gemini-2.0-flash' for better performance and reliability
+        # NOTE: This doesn't make an API call, just initializes the client
         gemini_model = genai.GenerativeModel(model_name='gemini-2.0-flash')
         print("DEBUG: Gemini AI model initialized successfully with gemini-2.0-flash")
     except Exception as e:
         print(f"ERROR: Failed to initialize Gemini AI model: {type(e).__name__}: {e}")
+        print(f"DEBUG: This is non-fatal. Report generation will be skipped.")
+        gemini_model = None  # Explicitly set to None on error
 else:
     print("WARNING: GEMINI_API_KEY not found in environment variables. Report generation will not work.")
 
