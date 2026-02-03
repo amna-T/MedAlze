@@ -181,15 +181,19 @@ def after_request(response):
     """Add CORS headers to every response."""
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, PUT, DELETE'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     response.headers['Access-Control-Max-Age'] = '3600'
     return response
 
-@app.route('/predict', methods=['POST'])
+@app.route('/predict', methods=['OPTIONS', 'POST'])
 def predict():
     """
     Endpoint to accept an uploaded chest X-ray image and return disease probabilities.
     """
+    # Handle CORS preflight request
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     try:
         print(f"DEBUG: /predict endpoint called. Method: {request.method}")
         
@@ -275,11 +279,15 @@ def predict():
         traceback.print_exc()
         return jsonify({"error": "Critical error"}), 500
 
-@app.route('/generate_report', methods=['POST'])
+@app.route('/generate_report', methods=['OPTIONS', 'POST'])
 def generate_report_endpoint():
     """
     Endpoint to generate a medical report using Gemini AI based on analysis results and patient info.
     """
+    # Handle CORS preflight request
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     if gemini_model is None:
         return jsonify({"error": "Gemini AI model not initialized. Please check server logs and GEMINI_API_KEY."}), 500
 
