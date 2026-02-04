@@ -196,13 +196,17 @@ def predict():
     
     try:
         print(f"DEBUG: /predict endpoint called. Method: {request.method}")
-        
-        # Check if file is in request
-        if 'file' not in request.files:
-            print("ERROR: No file part in request")
-            return jsonify({"error": "No file part in the request"}), 400
-        
-        file = request.files['file']
+        # Defensive: handle client disconnects gracefully
+        try:
+            if 'file' not in request.files:
+                print("ERROR: No file part in request")
+                return jsonify({"error": "No file part in the request"}), 400
+            file = request.files['file']
+        except Exception as e:
+            print(f"ERROR: Exception accessing request.files (possible client disconnect): {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": "Client disconnected or invalid upload. Please try again."}), 400
         print(f"DEBUG: File received: {file.filename}")
         
         if file.filename == '':
