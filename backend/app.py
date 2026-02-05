@@ -280,7 +280,8 @@ def predict():
             
             # Force memory cleanup on exit
             gc.collect()
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             print("DEBUG: Final cleanup complete")
                     
     except Exception as e:
