@@ -395,37 +395,65 @@ export default function UploadXray() {
 
       setCurrentStep('analyzing');
 
-      const analysisResults = await analyzeXRay(file);
-      setAiAnalysisResults(analysisResults);
-
-      const nextStatus: XRayRecord['status'] = analysisResults.noSignificantFinding 
-        ? 'requires_radiologist_review' 
-        : 'ai_analysis_complete';
-
-      await updateDoc(doc(db, 'xrays', docRef.id), {
-        aiAnalysis: {
-          condition: analysisResults.condition,
-          confidence: analysisResults.confidence,
-          detectedAt: new Date().toISOString(),
-          allPredictions: analysisResults.allPredictions,
-          noSignificantFinding: analysisResults.noSignificantFinding,
-        },
-        status: nextStatus,
-      });
-
-      if (analysisResults.noSignificantFinding) {
-        toast({
-          title: "AI Analysis Uncertain",
-          description: "The AI model is uncertain about findings. Manual radiologist review is required.",
-          variant: "warning",
+      // Send image to Flask backend for AI analysis
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        // Replace with your actual backend URL
+        const response = await fetch('https://medalze-vwn5.onrender.com/predict', {
+          method: 'POST',
+          body: formData,
         });
-        setCurrentStep('review_required');
-      } else {
-        toast({
-          title: "AI Analysis Complete",
-          description: "X-ray analyzed. You can now generate the medical report.",
+        if (!response.ok) {
+          throw new Error('Failed to get prediction from backend');
+        }
+        const result = await response.json();
+        // Map backend response to AnalysisResult type
+        const analysisResults = {
+          condition: result.condition,
+          confidence: result.confidence,
+          allPredictions: result.all_predictions || [],
+          noSignificantFinding: result.no_significant_finding || false,
+        };
+        setAiAnalysisResults(analysisResults);
+
+        const nextStatus: XRayRecord['status'] = analysisResults.noSignificantFinding 
+          ? 'requires_radiologist_review' 
+          : 'ai_analysis_complete';
+
+        await updateDoc(doc(db, 'xrays', docRef.id), {
+          aiAnalysis: {
+            condition: analysisResults.condition,
+            confidence: analysisResults.confidence,
+            detectedAt: new Date().toISOString(),
+            allPredictions: analysisResults.allPredictions,
+            noSignificantFinding: analysisResults.noSignificantFinding,
+          },
+          status: nextStatus,
         });
-        setCurrentStep('analysis_complete'); // Set to analysis_complete, do not auto-generate
+
+        if (analysisResults.noSignificantFinding) {
+          toast({
+            title: "AI Analysis Uncertain",
+            description: "The AI model is uncertain about findings. Manual radiologist review is required.",
+            variant: "warning",
+          });
+          setCurrentStep('review_required');
+        } else {
+          toast({
+            title: "AI Analysis Complete",
+            description: "X-ray analyzed. You can now generate the medical report.",
+          });
+          setCurrentStep('analysis_complete'); // Set to analysis_complete, do not auto-generate
+        }
+      } catch (error: any) {
+        console.error("UploadXray: Error during backend AI analysis:", error);
+        toast({
+          title: "Backend Error",
+          description: error.message || "Failed to get prediction from backend.",
+          variant: "destructive",
+        });
+        setCurrentStep('initial');
       }
 
     } catch (error: any) {
