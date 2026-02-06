@@ -395,37 +395,48 @@ export default function UploadXray() {
 
       setCurrentStep('analyzing');
 
-      const analysisResults = await analyzeXRay(file);
-      setAiAnalysisResults(analysisResults);
+      try {
+        // Use analyzeXRay utility to ensure correct mapping
+        const analysisResults = await analyzeXRay(file);
+        setAiAnalysisResults(analysisResults);
 
-      const nextStatus: XRayRecord['status'] = analysisResults.noSignificantFinding 
-        ? 'requires_radiologist_review' 
-        : 'ai_analysis_complete';
+        const nextStatus: XRayRecord['status'] = analysisResults.noSignificantFinding 
+          ? 'requires_radiologist_review' 
+          : 'ai_analysis_complete';
 
-      await updateDoc(doc(db, 'xrays', docRef.id), {
-        aiAnalysis: {
-          condition: analysisResults.condition,
-          confidence: analysisResults.confidence,
-          detectedAt: new Date().toISOString(),
-          allPredictions: analysisResults.allPredictions,
-          noSignificantFinding: analysisResults.noSignificantFinding,
-        },
-        status: nextStatus,
-      });
-
-      if (analysisResults.noSignificantFinding) {
-        toast({
-          title: "AI Analysis Uncertain",
-          description: "The AI model is uncertain about findings. Manual radiologist review is required.",
-          variant: "warning",
+        await updateDoc(doc(db, 'xrays', docRef.id), {
+          aiAnalysis: {
+            condition: analysisResults.condition,
+            confidence: analysisResults.confidence,
+            detectedAt: new Date().toISOString(),
+            allPredictions: analysisResults.allPredictions,
+            noSignificantFinding: analysisResults.noSignificantFinding,
+          },
+          status: nextStatus,
         });
-        setCurrentStep('review_required');
-      } else {
+
+        if (analysisResults.noSignificantFinding) {
+          toast({
+            title: "AI Analysis Uncertain",
+            description: "The AI model is uncertain about findings. Manual radiologist review is required.",
+            variant: "warning",
+          });
+          setCurrentStep('review_required');
+        } else {
+          toast({
+            title: "AI Analysis Complete",
+            description: "X-ray analyzed. You can now generate the medical report.",
+          });
+          setCurrentStep('analysis_complete');
+        }
+      } catch (error: any) {
+        console.error("UploadXray: Error during backend AI analysis:", error);
         toast({
-          title: "AI Analysis Complete",
-          description: "X-ray analyzed. You can now generate the medical report.",
+          title: "Backend Error",
+          description: error.message || "Failed to get prediction from backend.",
+          variant: "destructive",
         });
-        setCurrentStep('analysis_complete'); // Set to analysis_complete, do not auto-generate
+        setCurrentStep('initial');
       }
 
     } catch (error: any) {

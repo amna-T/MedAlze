@@ -5,8 +5,8 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import uuid
 import torch
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import google.genai as genai
+from google.genai.types import HarmCategory, HarmBlockThreshold
 import json # Import the json module
 
 # Import functions from our modules
@@ -72,21 +72,16 @@ except Exception as e:
     raise
 
 # Initialize Gemini AI
-gemini_model = None
+gemini_client = None
 if app.config['GEMINI_API_KEY']:
     try:
-        # Show first and last 10 chars of key for debugging
         key = app.config['GEMINI_API_KEY']
         key_preview = f"{key[:10]}...{key[-10:]}" if len(key) > 20 else "***"
-        print(f"DEBUG: Initializing Gemini with API key: {key_preview}")
-        
-        # Configure the API key globally before initializing the model
-        genai.configure(api_key=app.config['GEMINI_API_KEY'])
-        # Use 'gemini-2.0-flash' for better performance and reliability
-        gemini_model = genai.GenerativeModel(model_name='gemini-2.0-flash')
-        print("DEBUG: Gemini AI model initialized successfully with gemini-2.0-flash")
+        print(f"DEBUG: Initializing Gemini Client with API key: {key_preview}")
+        gemini_client = genai.Client(api_key=key)
+        print("DEBUG: Gemini Client initialized successfully.")
     except Exception as e:
-        print(f"ERROR: Failed to initialize Gemini AI model: {type(e).__name__}: {e}")
+        print(f"ERROR: Failed to initialize Gemini Client: {type(e).__name__}: {e}")
 else:
     print("WARNING: GEMINI_API_KEY not found in environment variables. Report generation will not work.")
 
@@ -226,17 +221,33 @@ def predict():
             print("DEBUG: Running inference...")
             disease_probabilities, no_significant_finding = predict_image(chexnet_model, preprocessed_image)
             print(f"DEBUG: Inference complete")
-            
+
+            # Find the condition with the highest probability
+            if isinstance(disease_probabilities, dict):
+                # If predict_image returns a dict (should be a list)
+                probs = list(disease_probabilities.values())
+                idx = probs.index(max(probs))
+                condition = list(disease_probabilities.keys())[idx]
+                confidence = probs[idx]
+                all_predictions = disease_probabilities
+            else:
+                idx = int(torch.tensor(disease_probabilities).argmax())
+                condition = CONDITIONS[idx]
+                confidence = float(disease_probabilities[idx])
+                all_predictions = {c: float(p) for c, p in zip(CONDITIONS, disease_probabilities)}
+
+            print(f"DEBUG: Top condition: {condition}, confidence: {confidence}")
+
             # Clear memory after inference
             del preprocessed_image
             torch.cuda.empty_cache()
             gc.collect()
             print("DEBUG: Memory freed after inference")
-            
-            # Return results
+
+            # Return results in frontend-expected format
             return jsonify({
                 "status": "success",
-                "predictions": disease_probabilities,
+                "predictions": all_predictions,
                 "conditions_order": CONDITIONS,
                 "no_significant_finding": no_significant_finding
             }), 200
@@ -272,8 +283,8 @@ def generate_report_endpoint():
     """
     Endpoint to generate a medical report using Gemini AI based on analysis results and patient info.
     """
-    if gemini_model is None:
-        return jsonify({"error": "Gemini AI model not initialized. Please check server logs and GEMINI_API_KEY."}), 500
+    if gemini_client is None:
+        return jsonify({"error": "Gemini AI client not initialized. Please check server logs and GEMINI_API_KEY."}), 500
 
     data = request.get_json()
     if not data:
@@ -362,12 +373,14 @@ def generate_report_endpoint():
             },
         ]
 
-        response = gemini_model.generate_content(prompt, safety_settings=safety_settings)
+        response = gemini_client.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt
+        )
         response_text = response.text
         print(f"DEBUG: Raw Gemini AI response text:\n{response_text}") # Log raw response
 
         # --- START FIX ---
-        # Extract the JSON string from the markdown block
         json_start = response_text.find("```json")
         json_end = response_text.rfind("```")
 
@@ -381,7 +394,6 @@ def generate_report_endpoint():
                 print(f"ERROR: Failed to parse extracted JSON string: {e}")
                 return jsonify({"error": "Failed to parse AI generated report. Invalid JSON format after extraction."}), 500
         else:
-            # If no markdown block is found, try to parse the whole response_text as JSON
             try:
                 parsed_report_dict = json.loads(response_text)
                 return jsonify({"report": parsed_report_dict}), 200

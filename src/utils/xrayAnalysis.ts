@@ -1,5 +1,5 @@
 // Define the Flask backend URL
-const FLASK_BACKEND_URL = import.meta.env.VITE_FLASK_BACKEND_URL || 'http://localhost:5000';
+const FLASK_BACKEND_URL = import.meta.env.VITE_FLASK_BACKEND_URL || 'http://127.0.0.1:10000';
 
 // The CONDITIONS array MUST match the one in your backend/model.py in order and content.
 // This order is crucial for correctly mapping the model's output probabilities to labels.
